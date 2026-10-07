@@ -11,7 +11,7 @@
 
 ### 1. Repo docs are the source of truth
 - **Date:** 2026-10-02
-- **Status:** Accepted
+- **Status:** Superseded by #18
 - **Decision:** `docs/` holds four files: PROJECT.md (what and why), DECISIONS.md (this file), ROADMAP.md (plan and status), DATA_MODEL.md (which data lives where). The Claude Project syncs these from GitHub. If chat and docs disagree, docs win.
 - **Why:** Chats drift and go stale. One reviewed source keeps teammates and Claude on the same info.
 - **Impact:** Doc changes go in the same PR as the code that caused them. Claude Code proposes doc edits, people approve them.
@@ -120,3 +120,10 @@
 - **Status:** Accepted
 - **Decision:** Start with Cloud Scheduler + Cloud Run Jobs (or the AWS equivalent, per #10). Prefect or Dagster only as a stretch goal.
 - **Why:** We only have one scheduled pipeline. A full orchestrator is overhead we don't need yet.
+
+### 18. Repo docs are the source of truth, now five files
+- **Date:** 2026-10-07
+- **Status:** Accepted
+- **Decision:** Same as #1, with `docs/CONCEPTS.md` added as a fifth file. `docs/` holds PROJECT.md (what and why), DECISIONS.md (this file), ROADMAP.md (plan and status), DATA_MODEL.md (which data lives where), and CONCEPTS.md (running glossary of the concepts, tools, and patterns the code uses). If chat and docs disagree, docs win.
+- **Why:** CONCEPTS.md was added with CLAUDE.md (PR #1) but #1 still listed four files, so the source-of-truth set and the repo disagreed.
+- **Impact:** CLAUDE.md lists CONCEPTS.md in the docs to read at the start of every session. A new concept in code gets its CONCEPTS.md entry in the same PR, like any other doc change.

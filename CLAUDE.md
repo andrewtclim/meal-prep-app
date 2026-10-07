@@ -4,7 +4,7 @@
 
 This repo has two goals: ship a working meal prep agent, and make sure both team members can explain every piece of the stack and every ML decision behind it. Explanations and documentation are part of the work, not extras.
 
-Read `docs/PROJECT.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, and `docs/DATA_MODEL.md` at the start of every session. If anything here or in chat conflicts with those docs, the docs win.
+Read `docs/PROJECT.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/DATA_MODEL.md`, and `docs/CONCEPTS.md` at the start of every session. If anything here or in chat conflicts with those docs, the docs win.
 
 ## Your role
 
