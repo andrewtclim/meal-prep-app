@@ -73,9 +73,10 @@
 
 ### 10. Cloud provider
 - **Date:** 2026-10-02
-- **Status:** Open
-- **Question:** GCP (Cloud Run, Artifact Registry) or AWS (Lambda/App Runner, ECR)?
-- **Decide by:** Week 1, before setting up CI/CD.
+- **Status:** Accepted
+- **Decision:** GCP: Cloud Run for the API, Artifact Registry for images, Cloud Scheduler + Cloud Run Jobs for scheduled pipelines (DECISIONS #17). Infra managed with Terraform; state in a GCS bucket.
+- **Why:** Project and Terraform bootstrap already pointed at GCP. One cloud keeps IAM, registry, and deploy simpler than splitting across AWS.
+- **Impact:** CI/CD targets Cloud Run. Week 1 CD and later pipeline scheduling follow GCP services. Terraform lives under `infra/`.
 
 ### 11. Substitution edge direction
 - **Date:** 2026-10-02

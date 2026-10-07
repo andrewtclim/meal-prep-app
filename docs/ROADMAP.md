@@ -17,7 +17,7 @@
 | Task | Tag | Owner | Status |
 |---|---|---|---|
 | Create repo with `docs/` and `CLAUDE.md`, connect Claude Project | must | | |
-| Decide cloud provider (DECISIONS #10) | must | | |
+| Decide cloud provider (DECISIONS #10) | must | | done |
 | GitHub Actions: lint + pytest on every PR | must | | |
 | Dockerized FastAPI hello endpoint | must | | |
 | CD: merge to main auto-deploys the endpoint | must | | |
@@ -67,3 +67,4 @@ _One line per change: date, what changed, why. Link a DECISIONS entry if one was
 
 - 2026-10-02: Prep task extraction added to week 3 (DECISIONS #6).
 - 2026-10-02: ELT with dbt added to week 2, FDA recalls pipeline added to week 4 (DECISIONS #14 to #16).
+- 2026-10-07: Chose GCP as cloud provider (DECISIONS #10); Terraform scaffold landed under `infra/`.
