@@ -1,13 +1,14 @@
 # Week of 10.07 to 10.14: Docs workflow
 
 ## Summary
-No app code yet. This week set up how we document the project: CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts.
+No app code yet. This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts) and chose GCP with a Terraform scaffold under `infra/`.
 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
-| [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Open |
+| [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
+| [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -51,3 +52,41 @@ flowchart LR
 ### Decisions and concepts
 - [DECISIONS #18](../docs/DECISIONS.md): five source-of-truth docs
 - [DECISIONS #19](../docs/DECISIONS.md): weekly review posts
+
+## Session: 2026-10-07 (Terraform review)
+### What we worked on and why
+Reviewed Paul's PR #3 slowly so both of us can explain Terraform. The scaffold has no resources yet; it pins versions, points state at a GCS bucket, and declares inputs. Review fixes: documented the state bucket bootstrap and access in `infra/README.md`, gave DECISIONS #10 a real rationale, and tidied formatting.
+
+### Key code
+`infra/providers.tf`
+```hcl
+terraform {
+  backend "gcs" {
+    bucket = "meal-prep-app-510920-tfstate"
+    prefix = "infra"
+  }
+}
+```
+State maps each resource in our code to its real GCP ID. It lives in a remote bucket, not git, because it can hold secrets in plaintext and needs locking when two people run `apply`. The bucket name is hardcoded because backend blocks are read before variables exist, and the bucket itself is created outside this config, since Terraform needs it before `init` can run.
+
+`infra/versions.tf`
+```hcl
+version = "~> 6.0"
+```
+Pessimistic constraint: newest 6.x, never 7.0, because major versions may break our config. The lock file pins the exact version (6.50.0) and checksums, like `uv.lock`.
+
+### Diagram
+```mermaid
+flowchart LR
+  Code[".tf files: what we want"] --> Plan{terraform plan}
+  State["state in GCS: what Terraform made"] --> Plan
+  Cloud["real GCP: what exists"] --> Plan
+  Plan --> Diff["create / update / destroy"]
+```
+
+### Decisions and concepts
+- [DECISIONS #10](../docs/DECISIONS.md): GCP with Cloud Run, state in GCS
+- CONCEPTS: [Terraform](../docs/CONCEPTS.md#terraform)
+
+## What we'd explain differently next time
+State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.
