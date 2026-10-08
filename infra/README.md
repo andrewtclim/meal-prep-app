@@ -11,7 +11,11 @@ Terraform for our GCP project (`meal-prep-app-510920`, region `us-west1`). See D
 | `providers.tf` | GCS state backend and Google provider defaults |
 | `variables.tf` | Input declarations |
 | `terraform.tfvars` | Input values. Never put secrets here |
-| `main.tf` | Resources (empty for now) |
+| `main.tf` | Reserved; resources live in focused files below |
+| `apis.tf` | Enable required Google APIs |
+| `artifact_registry.tf` | Docker repository `api` |
+| `github_wif.tf` | GitHub Actions → GCP Workload Identity Federation + deploy SA |
+| `outputs.tf` | Registry path, deploy SA email, WIF provider name for later CI |
 
 ## State bucket (one-time bootstrap)
 
@@ -41,6 +45,9 @@ gcloud auth application-default login   # credentials come from your gcloud logi
 cd infra
 terraform init                          # downloads the provider, connects to the state bucket
 terraform fmt -check && terraform validate
-terraform plan                          # with an empty main.tf, expect "No changes"
+terraform plan                          # review APIs, Artifact Registry, WIF, IAM
 terraform apply                         # only after the plan has been reviewed
 ```
+
+After apply, `terraform output` prints values a later GitHub Actions workflow will need (no secrets — resource names only). Cloud Run roles and the Actions workflow itself are a later PR.
+

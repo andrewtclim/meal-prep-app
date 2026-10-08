@@ -61,7 +61,7 @@ Work landed in three layers:
 
 1. **Bootstrap (outside git):** GCP project, billing, CLI auth, and a GCS bucket for Terraform state.
 2. **Scaffold PR (#3):** commit the `infra/` layout (provider, variables, empty `main.tf`, lockfile) plus docs for the cloud choice. No managed resources yet — just the wiring.
-3. **Foundations (in progress on `infra/gcp-foundations`):** enable Google APIs, create an Artifact Registry Docker repo named `api`. GitHub Workload Identity Federation is next; not written yet.
+3. **Foundations (on `infra/gcp-foundations`):** enable Google APIs, create an Artifact Registry Docker repo named `api`, and set up GitHub Workload Identity Federation so a later Actions workflow can push images without a JSON key.
 
 We used a feature branch and PR instead of committing straight to `main`, so Andrew can review infra before it becomes the shared baseline.
 
@@ -121,10 +121,10 @@ terraform plan    # with empty main.tf: no changes yet
 ```
 Nothing is created in GCP until `terraform apply`.
 
-**Part D — Foundations (in progress)**
+**Part D — Foundations**
 
-9. Add `apis.tf` (enable APIs) and `artifact_registry.tf` (Docker repo `api`).
-10. Next: GitHub WIF, then later Cloud Run + CD. Always `plan` before `apply`, and only apply when the team agrees.
+9. Add `apis.tf` (enable APIs), `artifact_registry.tf` (Docker repo `api`), and `github_wif.tf` (OIDC pool/provider + `github-deploy` SA with Artifact Registry writer).
+10. Later PRs: Cloud Run + the Actions workflow that uses the WIF outputs. Always `plan` before `apply`, and only apply when the team agrees.
 
 **Teammate checklist after clone:** `gcloud` auth + ADC login → set project → access to the tfstate bucket → `cd infra && terraform init` → `terraform plan` before any `apply`.
 
@@ -173,6 +173,17 @@ resource "google_artifact_registry_repository" "api" {
 ```
 Artifact Registry is our private shelf for Docker images — not the GitHub code repo. Name `api` is generic on purpose ([DECISIONS #13](../docs/DECISIONS.md)). `depends_on` enables APIs before creating the repo. Alternative: Docker Hub — extra account, weaker GCP IAM fit.
 
+`infra/github_wif.tf` (foundations)
+```hcl
+resource "google_iam_workload_identity_pool_provider" "github" {
+  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+```
+GitHub Actions gets a short-lived OIDC token; GCP trusts tokens only from `andrewtclim/meal-prep-app`, then allows impersonation of `github-deploy` (Artifact Registry writer only for now). Alternative: JSON key in GitHub Secrets — long-lived and leak-prone. Industry pattern: keyless CI→cloud auth.
+
 We have **not** run `terraform apply` for the foundations resources yet.
 
 ### Diagram
@@ -185,21 +196,24 @@ flowchart LR
   subgraph scaffold [PR 3 scaffold]
     TF[Terraform provider and vars]
   end
-  subgraph foundations [Foundations in progress]
+  subgraph foundations [Foundations]
     APIs[Enable Google APIs]
     AR[Artifact Registry repo api]
-    WIF[GitHub WIF - next]
+    WIF[GitHub WIF]
   end
   Proj --> TF
   StateBucket --> TF
   TF --> APIs --> AR --> WIF
-  AR -.->|later CI pushes images| CloudRun[Cloud Run - later PR]
+  WIF -.->|later CI pushes images| AR
+  AR -.->|later| CloudRun[Cloud Run - later PR]
 ```
 
 ### Decisions and concepts
-- [DECISIONS #10](../docs/DECISIONS.md): cloud provider — still **Open** on `main` until PR #3 merges; the PR proposes **GCP Accepted**
+- [DECISIONS #10](../docs/DECISIONS.md): GCP Accepted (merged with PR #3)
 - [DECISIONS #13](../docs/DECISIONS.md): keep the app name out of package/module (and registry) names
-- [CONCEPTS: Terraform](../docs/CONCEPTS.md#terraform) — infra as code with remote state vs clicking in the console
+- [CONCEPTS: Terraform](../docs/CONCEPTS.md#terraform)
+- [CONCEPTS: Artifact Registry](../docs/CONCEPTS.md#artifact-registry)
+- [CONCEPTS: Workload Identity Federation](../docs/CONCEPTS.md#workload-identity-federation)
 
 ### What we'd explain differently next time
 - “Repo” means two different things: the GitHub code repo vs an Artifact Registry image repo named `api`.
