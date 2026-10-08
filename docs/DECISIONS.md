@@ -75,7 +75,7 @@
 - **Date:** 2026-10-02
 - **Status:** Accepted
 - **Decision:** GCP: Cloud Run for the API, Artifact Registry for images, Cloud Scheduler + Cloud Run Jobs for scheduled pipelines (DECISIONS #17). Infra managed with Terraform; state in a GCS bucket.
-- **Why:** Project and Terraform bootstrap already pointed at GCP. One cloud keeps IAM, registry, and deploy simpler than splitting across AWS.
+- **Why:** Cloud Run runs our FastAPI Docker image as-is and scales to zero when idle, so a low-traffic demo costs close to nothing. Cloud Run Jobs runs scheduled pipelines from the same image (#17). The AWS option needs more glue: Lambda needs an adapter to serve FastAPI. One cloud keeps IAM, registry, and deploy in one place.
 - **Impact:** CI/CD targets Cloud Run. Week 1 CD and later pipeline scheduling follow GCP services. Terraform lives under `infra/`.
 
 ### 11. Substitution edge direction

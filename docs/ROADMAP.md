@@ -47,7 +47,7 @@
 | Week | Phase | Goal | Tags |
 |---|---|---|---|
 | 3 | Data | Neo4j graph build, seed `SUBSTITUTES_FOR`, prep task extraction, recipe embeddings in pgvector | must (prep extraction may spill into week 4) |
-| 4 | Data | USDA nutrient load, FDA recalls pipeline (scheduled, incremental), Terraform for infra | must: USDA. should: recalls. should: Terraform (can slip to week 10) |
+| 4 | Data | USDA nutrient load, FDA recalls pipeline (scheduled, incremental), Terraform resources for infra (scaffold done in week 1) | must: USDA. should: recalls. should: Terraform (can slip to week 10) |
 | 5 | ML | Ingredient embeddings, ~100 hand-labeled substitution pairs, baseline comparison | must |
 | 6 | ML | Write scores to Neo4j edges, expiry prioritization incl. prepped foods | must |
 | 7 | Agent | LangGraph skeleton: intake, pantry check, retrieval, gap analysis | must |
