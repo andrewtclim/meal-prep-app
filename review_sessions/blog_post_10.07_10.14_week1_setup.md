@@ -1,14 +1,15 @@
 # Week of 10.07 to 10.14: Week 1 setup
 
 ## Summary
-No app code yet. This week locked down how we document the project (CONCEPTS.md, weekly review posts) and started cloud infra: a GCP project with Terraform remote state, a scaffold PR for the `infra/` layout, and the first real Terraform resources (enable APIs, Artifact Registry) on a foundations branch.
+No app code yet. This week locked down how we document the project (CONCEPTS.md, weekly review posts) and stood up cloud infra: a GCP project with Terraform remote state, scaffold PR #3 for `infra/`, then foundations on `infra/gcp-foundations` (enable APIs, Artifact Registry repo `api`, GitHub Workload Identity Federation for keyless image pushes). Cloud Run and the Actions workflow are later PRs. We have not `terraform apply`’d the foundations resources yet.
 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
-| [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Lands Terraform GCP scaffold under `infra/`; proposes accepting DECISIONS #10 (GCP) | Open |
+| [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold under `infra/`; accepts DECISIONS #10 (GCP) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
+| (pending) `infra/gcp-foundations` | APIs, Artifact Registry, GitHub WIF, CONCEPTS, this post | Open / not pushed yet |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -61,11 +62,11 @@ Work landed in three layers:
 
 1. **Bootstrap (outside git):** GCP project, billing, CLI auth, and a GCS bucket for Terraform state.
 2. **Scaffold PR (#3):** commit the `infra/` layout (provider, variables, empty `main.tf`, lockfile) plus docs for the cloud choice. No managed resources yet — just the wiring.
-3. **Foundations (on `infra/gcp-foundations`):** enable Google APIs, create an Artifact Registry Docker repo named `api`, and set up GitHub Workload Identity Federation so a later Actions workflow can push images without a JSON key.
+3. **Foundations (branch `infra/gcp-foundations`):** enable Google APIs, create an Artifact Registry Docker repo named `api`, and set up GitHub Workload Identity Federation so a later Actions workflow can push images without a JSON key.
 
-We used a feature branch and PR instead of committing straight to `main`, so Andrew can review infra before it becomes the shared baseline.
+We used feature branches and PRs instead of committing straight to `main`, so Andrew can review infra before it becomes the shared baseline.
 
-> The original console clicks were not written down live. The setup steps below are **reconstructed** from the project we ended up with (`meal-prep-app-510920`, bucket `meal-prep-app-510920-tfstate`, region `us-west1`).
+> The original console clicks were not written down live. The setup steps below are **reconstructed** from the project we ended up with (`meal-prep-app-510920`, bucket `meal-prep-app-510920-tfstate`, region `us-west1`). Day-to-day commands also live in [`infra/README.md`](../infra/README.md).
 
 ### How we set it up
 
@@ -101,7 +102,7 @@ Optional: enable object versioning so a bad state write is recoverable.
 
 **Part C — Terraform scaffold in the repo (PR #3)**
 
-7. Layout under `infra/`:
+7. Layout under `infra/` (scaffold):
 
 | File | Role |
 |---|---|
@@ -121,14 +122,14 @@ terraform plan    # with empty main.tf: no changes yet
 ```
 Nothing is created in GCP until `terraform apply`.
 
-**Part D — Foundations**
+**Part D — Foundations (`infra/gcp-foundations`)**
 
-9. Add `apis.tf` (enable APIs), `artifact_registry.tf` (Docker repo `api`), and `github_wif.tf` (OIDC pool/provider + `github-deploy` SA with Artifact Registry writer).
+9. Add `apis.tf`, `artifact_registry.tf`, `github_wif.tf`, `outputs.tf`, and `github_repository` on `variables.tf`.
 10. Later PRs: Cloud Run + the Actions workflow that uses the WIF outputs. Always `plan` before `apply`, and only apply when the team agrees.
 
 **Teammate checklist after clone:** `gcloud` auth + ADC login → set project → access to the tfstate bucket → `cd infra && terraform init` → `terraform plan` before any `apply`.
 
-### Key code
+### Key code — scaffold and APIs / registry
 
 `infra/providers.tf` (PR #3)
 ```hcl
@@ -173,18 +174,116 @@ resource "google_artifact_registry_repository" "api" {
 ```
 Artifact Registry is our private shelf for Docker images — not the GitHub code repo. Name `api` is generic on purpose ([DECISIONS #13](../docs/DECISIONS.md)). `depends_on` enables APIs before creating the repo. Alternative: Docker Hub — extra account, weaker GCP IAM fit.
 
-`infra/github_wif.tf` (foundations)
+### Key code — Workload Identity Federation (detailed)
+
+WIF is the **secure handshake**, not the full auto-deploy system.
+
+| Piece | Role | When |
+|---|---|---|
+| GitHub Actions workflow | Runs on merge: build image, push, (later) deploy | Later PR |
+| `github_wif.tf` | Lets that job prove “I’m our repo” and act as `github-deploy` without a JSON key | This PR |
+| Artifact Registry | Stores Docker images; SA can write here | This PR |
+| Cloud Run | Runs the app | Later PR |
+
+```text
+GitHub job → proves identity (OIDC) → acts as github-deploy → can push images
+```
+
+#### `variables.tf` — which GitHub repo is allowed
+
+```hcl
+variable "github_repository" {
+  type        = string
+  description = "GitHub repo (owner/name) allowed to deploy via Workload Identity Federation"
+  default     = "andrewtclim/meal-prep-app"
+}
+```
+One named input reused in `github_wif.tf`. Default is already our repo, so we did not duplicate it in `terraform.tfvars`.
+
+#### `github_wif.tf` — five blocks
+
+**Block 1 — Workload Identity pool** (trust folder for external identities)
+
+```hcl
+resource "google_iam_workload_identity_pool" "github" {
+  workload_identity_pool_id = "github"
+  display_name              = "GitHub Actions"
+  depends_on                = [google_project_service.services]
+}
+```
+GitHub is outside Google. The pool is where we attach external trusts. `depends_on` waits for APIs from `apis.tf`.
+
+**Block 2 — Provider** (rules for GitHub’s badge)
+
 ```hcl
 resource "google_iam_workload_identity_pool_provider" "github" {
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.actor"      = "assertion.actor"
+    "attribute.repository" = "assertion.repository"
+    "attribute.ref"        = "assertion.ref"
+  }
   attribute_condition = "assertion.repository == \"${var.github_repository}\""
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
 }
 ```
-GitHub Actions gets a short-lived OIDC token; GCP trusts tokens only from `andrewtclim/meal-prep-app`, then allows impersonation of `github-deploy` (Artifact Registry writer only for now). Alternative: JSON key in GitHub Secrets — long-lived and leak-prone. Industry pattern: keyless CI→cloud auth.
+- `issuer_uri`: only trust ID tokens issued by GitHub Actions.
+- `attribute_mapping`: copy useful fields off the token into GCP (repo, branch, actor).
+- `attribute_condition`: reject every repo except `andrewtclim/meal-prep-app`.
 
-We have **not** run `terraform apply` for the foundations resources yet.
+**Block 3 — Service account** (robot user inside GCP)
+
+```hcl
+resource "google_service_account" "github_deploy" {
+  account_id   = "github-deploy"
+  display_name = "GitHub Actions deploy"
+}
+```
+GCP permissions attach to accounts. GitHub itself is not a GCP user; this SA is the identity that will get permissions.
+
+**Block 4 — Link GitHub repo → that SA**
+
+```hcl
+resource "google_service_account_iam_member" "github_wif" {
+  service_account_id = google_service_account.github_deploy.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+}
+```
+Jobs from our GitHub repo may **impersonate** `github-deploy`. Without this, GitHub can prove who it is but still cannot act as the robot.
+
+**Block 5 — What the robot may do** (narrow on purpose)
+
+```hcl
+resource "google_artifact_registry_repository_iam_member" "github_deploy_writer" {
+  role   = "roles/artifactregistry.writer"
+  member = "serviceAccount:${google_service_account.github_deploy.email}"
+}
+```
+`github-deploy` may push/pull images on the `api` registry. **Not** Cloud Run deploy yet — that IAM lands with the CD PR.
+
+Story top to bottom: make a trust folder → accept only our repo’s GitHub tokens → create robot → let our repo wear the robot’s badge → let the robot write to the image shelf.
+
+#### `outputs.tf` — phone book, not resources
+
+Outputs do **not** create anything. After apply they print names a future Actions workflow will need (not secrets):
+
+```hcl
+output "artifact_registry_repository" { ... }           # push images here
+output "github_deploy_service_account_email" { ... }  # act as this SA
+output "github_wif_provider" { ... }                  # use this WIF provider
+```
+
+```bash
+cd infra
+terraform output   # after apply
+```
+
+Without outputs you’d copy long resource names from the GCP console by hand. With outputs, Terraform prints the sticky notes.
+
+We have **not** run `terraform apply` for the foundations resources yet. Next checkpoint: `terraform plan`, then apply only with explicit team OK.
 
 ### Diagram
 ```mermaid
@@ -199,14 +298,24 @@ flowchart LR
   subgraph foundations [Foundations]
     APIs[Enable Google APIs]
     AR[Artifact Registry repo api]
-    WIF[GitHub WIF]
+    Pool[WIF pool]
+    Prov[GitHub OIDC provider]
+    SA[github-deploy SA]
   end
   Proj --> TF
   StateBucket --> TF
-  TF --> APIs --> AR --> WIF
-  WIF -.->|later CI pushes images| AR
-  AR -.->|later| CloudRun[Cloud Run - later PR]
+  TF --> APIs --> AR
+  APIs --> Pool --> Prov --> SA
+  SA -->|writer| AR
+  GH[GitHub Actions later] -.->|OIDC| Prov
+  SA -.->|later| CloudRun[Cloud Run later PR]
 ```
+
+### Git habits we practiced this week
+- Work on a feature branch (`infra/terraform-scaffold`, then `infra/gcp-foundations`), open a PR, merge to `main` after review.
+- Uncommitted local files block `git merge` — commit or stash first.
+- Merge **`origin/main`** (after `git fetch`), not a stale local `main`, so you actually get PR #3 and teammates’ commits.
+- Ignore `.DS_Store`; never commit `.terraform/` or `*.tfstate`.
 
 ### Decisions and concepts
 - [DECISIONS #10](../docs/DECISIONS.md): GCP Accepted (merged with PR #3)
@@ -217,6 +326,8 @@ flowchart LR
 
 ### What we'd explain differently next time
 - “Repo” means two different things: the GitHub code repo vs an Artifact Registry image repo named `api`.
+- WIF is the keyless ID badge; auto-deploy is the Actions workflow that will use that badge later — easy to conflate.
 - Feature branches vs `main`: merge the scaffold PR before stacking too much foundations work, or accept the extra merge/rebase step.
 - Put new `.tf` files next to `providers.tf` (`infra/apis.tf`), never under `.terraform/` (local cache, gitignored).
 - Commit `.terraform.lock.hcl`; never commit `.terraform/` or `*.tfstate`.
+- We briefly had two weekly post filenames (`docs_workflow` and `week1_setup`); prefer one post per week and rename with `git mv` when the topic shifts.
