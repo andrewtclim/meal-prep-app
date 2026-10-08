@@ -7,7 +7,7 @@ No app code yet. This week set up how we document the project: CONCEPTS.md joine
 | PR | What it did | State |
 |---|---|---|
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
-| PR_LINK | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Open |
+| [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
