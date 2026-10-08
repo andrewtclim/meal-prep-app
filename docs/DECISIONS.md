@@ -128,3 +128,10 @@
 - **Decision:** Same as #1, with `docs/CONCEPTS.md` added as a fifth file. `docs/` holds PROJECT.md (what and why), DECISIONS.md (this file), ROADMAP.md (plan and status), DATA_MODEL.md (which data lives where), and CONCEPTS.md (running glossary of the concepts, tools, and patterns the code uses). If chat and docs disagree, docs win.
 - **Why:** CONCEPTS.md was added with CLAUDE.md (PR #1) but #1 still listed four files, so the source-of-truth set and the repo disagreed.
 - **Impact:** CLAUDE.md lists CONCEPTS.md in the docs to read at the start of every session. A new concept in code gets its CONCEPTS.md entry in the same PR, like any other doc change.
+
+### 19. Weekly review posts
+- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Decision:** Each week (Wednesday to Wednesday) gets a blog-style post in `review_sessions/` covering the sessions, key code with reasoning, diagrams, and PRs. Format is set in CLAUDE.md.
+- **Why:** Learning is a core goal. A readable narrative of each week makes it easier to explain the stack later and doubles as portfolio writing.
+- **Impact:** Every PR updates that week's post. `review_sessions/` is not one of the source-of-truth files in #18; docs win if they disagree.
