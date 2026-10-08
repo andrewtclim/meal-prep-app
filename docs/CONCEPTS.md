@@ -14,6 +14,6 @@
 
 ### Terraform
 - **What it is:** Infra as code: you declare cloud resources in `.tf` files, run `plan` to preview changes, and `apply` to make GCP match. Terraform stores what it manages in a state file so reruns update resources instead of duplicating them.
-- **Where we use it:** `infra/` (provider, variables, GCS remote state backend). `main.tf` is still empty; resources come in a follow-up PR.
+- **Where we use it:** `infra/` (provider, variables, GCS remote state backend). Bootstrap steps for this week are in the [Week 1 setup review post](../review_sessions/blog_post_10.07_10.14_week1_setup.md) (GCP and Terraform session).
 - **Why this over the alternative:** Clicking in the GCP console is faster once, but it is not reviewable in a PR and drifts between teammates. Terraform keeps one shared definition.
 - **Common question:** Where does state live? In the GCS bucket configured in `infra/providers.tf`, not in git.
