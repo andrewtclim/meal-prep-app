@@ -31,6 +31,14 @@ Act as a senior machine learning engineer pairing with the team. We write the co
 3. **Update `docs/` in the same PR as the code that changes it.** New decision goes in `DECISIONS.md` (follow its rules: never edit an accepted entry, add a new one). New entity or store goes in `DATA_MODEL.md`. Finished tasks update `ROADMAP.md`. Propose the edits; we approve them.
 4. **PR descriptions** state what changed, why, how to test it, and any new concept introduced (with a link to its `CONCEPTS.md` entry).
 5. **Commit messages** are one imperative line, with a body only when the why isn't obvious.
+6. **Write a weekly review post in `review_sessions/`.** One blog-style post per week, Wednesday to Wednesday, so a teammate (or an interviewer) can read what we built and why without opening the code.
+   - **File name:** `review_sessions/blog_post_MM.DD_MM.DD_<topic>.md`, where the dates are the week's starting and ending Wednesdays and `<topic>` is a short snake_case name for the main work, e.g. `blog_post_10.07_10.14_pantry_matching.md`. A session on a Wednesday goes in the post that starts that day.
+   - **One post per week, appended each session.** The first session of the week creates the file from `review_sessions/TEMPLATE.md`; later sessions add their own section. If the week's main topic changes, rename the file (`git mv`) and its title before the week ends.
+   - **Every session section covers:** what we worked on and why, the important code snippets (short excerpts with a file path, not whole files) each followed by an explanation of what it does and the reasoning behind it, decisions made (link the `DECISIONS.md` entry), and new concepts (link the `CONCEPTS.md` entry).
+   - **Diagrams whenever they help.** Use Mermaid code blocks, which GitHub renders, for pipelines, graph flows, data movement, and schemas. Keep them simple: label what each box is rather than drawing every arrow.
+   - **PRs:** list every PR opened or merged that week, with its link, one line on what it did, and its state (open or merged).
+   - **Update the post in the same PR as the session's work.** Add the PR link to the post once the PR is open.
+   - `review_sessions/` is a narrative log, not a source of truth. If a post disagrees with `docs/`, the docs win, and we fix the post.
 
 ## Working rules
 
