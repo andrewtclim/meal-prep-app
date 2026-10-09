@@ -37,13 +37,14 @@ The user gives us the dishes they want (or general preferences), their current i
 
 | Source | What we use it for | Notes |
 |---|---|---|
-| Open recipe dataset (e.g. Food.com on Kaggle) | Persistent recipe store, batch loaded into Postgres and Neo4j | Final choice is an open decision |
-| Spoonacular API | Live, query-time recipe search and substitution lookups | Terms only allow caching for 1 hour, so **we don't store Spoonacular data** |
+| Open recipe dataset (Food.com on Kaggle is the first candidate) | Recipe store for search and planning, batch loaded into Postgres and Neo4j | Final choice is an open decision (DECISIONS #8). Confirm the license before loading |
 | User-saved recipes | User's own recipes, same schema as the open dataset | |
-| USDA FoodData Central | Nutrient profiles per ingredient, used as features for the substitution model | |
+| USDA FoodData Central | Nutrient profiles per ingredient, used as features for the substitution model | Public domain |
 | openFDA food enforcement API | Food recalls, loaded on a schedule to flag recalled ingredients in a pantry or plan | Core build, tagged `should` |
 | Google Places API | Nearby stores and store types, looked up at query time | Check Google's caching terms before storing anything beyond place IDs |
 | User data | Profile, preferences, pantry, saved recipes, plans, conversations | Our own schema in Postgres |
+
+We don't use Spoonacular: its terms ban storing anything beyond recipe ids, titles, and image URLs (DECISIONS #20).
 
 ## Tech Stack
 

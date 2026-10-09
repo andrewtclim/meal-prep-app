@@ -23,7 +23,7 @@
 | CD: merge to main auto-deploys the endpoint | must | | |
 | Create Supabase and Neo4j free tier projects (dev only) | must | | |
 | Set billing alerts, check free tier limits for Supabase and Neo4j | must | | |
-| Pick recipe dataset (DECISIONS #8) | must | | |
+| Pick recipe dataset (DECISIONS #8) | must | Andrew | investigating Food.com |
 
 **Done when:** a merge to main deploys a live endpoint.
 
