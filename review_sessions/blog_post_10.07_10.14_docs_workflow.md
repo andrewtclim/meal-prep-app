@@ -9,6 +9,7 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
+| [#7](https://github.com/andrewtclim/meal-prep-app/pull/7) | Shared conda env + requirements.txt (DECISIONS #20, proposed) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
