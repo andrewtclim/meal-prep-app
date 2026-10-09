@@ -1,0 +1,38 @@
+# Python dependencies, shared by environment.yml (local dev) and Docker (deploy).
+# Ranges allow patch/minor updates but block major versions that can break us.
+# Undecided pieces are left out on purpose: LLM provider SDK, tracing
+# (DECISIONS #12), and the embedding model library. Add them with their decision.
+
+# Agent orchestration (DECISIONS #3)
+langgraph>=1.0,<2
+langchain>=1.0,<2
+langgraph-checkpoint-postgres>=2.0,<4   # checkpointer on Postgres (multi-turn edits)
+
+# Databases (DECISIONS #4)
+psycopg[binary]>=3.2,<4                 # Postgres driver, plain SQL
+pgvector>=0.3,<1                        # vector type adapter for psycopg
+neo4j>=5.20,<7                          # official Neo4j driver
+langchain-neo4j>=0.4,<2
+langchain-postgres>=0.0.14,<1           # pgvector retriever for LangChain
+
+# Transforms (DECISIONS #15)
+dbt-core>=1.8,<2
+dbt-postgres>=1.8,<2
+
+# API and frontend
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.7,<3
+httpx>=0.27,<1                          # calls to Spoonacular, USDA, openFDA, Places
+python-dotenv>=1.0,<2                   # loads .env locally; never commit .env
+streamlit>=1.38,<2
+
+# Data and ML (substitution scoring, evaluation)
+numpy>=1.26,<3
+pandas>=2.2,<3
+scikit-learn>=1.5,<2
+
+# Dev tooling (CI: lint + pytest)
+pytest>=8,<9
+ruff>=0.6,<1
+ipykernel>=6.29,<7                      # run notebooks in this env

@@ -135,3 +135,10 @@
 - **Decision:** Each week (Wednesday to Wednesday) gets a blog-style post in `review_sessions/` covering the sessions, key code with reasoning, diagrams, and PRs. Format is set in CLAUDE.md.
 - **Why:** Learning is a core goal. A readable narrative of each week makes it easier to explain the stack later and doubles as portfolio writing.
 - **Impact:** Every PR updates that week's post. `review_sessions/` is not one of the source-of-truth files in #18; docs win if they disagree.
+
+### 20. Conda env with a shared pip requirements file
+- **Date:** 2026-10-08
+- **Status:** Proposed
+- **Decision:** Local dev uses a conda env (`environment.yml`, Python 3.12) whose packages come from `requirements.txt`. Version ranges block major upgrades. LLM provider SDK, tracing (#12), and embedding library are added when those are decided.
+- **Why:** Conda is what we already use for DS work and handles the Python version. Keeping packages in `requirements.txt` lets the Docker image install the exact same list with pip.
+- **Impact:** Adding a dependency means editing `requirements.txt` in a PR; teammates run `conda env update -f environment.yml --prune`.

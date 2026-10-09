@@ -1,0 +1,13 @@
+# Shared dev environment. Create:  conda env create -f environment.yml
+# Update after this file changes:  conda env update -f environment.yml --prune
+#
+# Conda owns only the interpreter. Python packages live in requirements.txt so
+# the Docker image (pip only) and this env install from the same list.
+name: mealprep
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt

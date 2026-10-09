@@ -88,5 +88,38 @@ flowchart LR
 - [DECISIONS #10](../docs/DECISIONS.md): GCP with Cloud Run, state in GCS
 - CONCEPTS: [Terraform](../docs/CONCEPTS.md#terraform)
 
+## Session: 2026-10-08 (dev environment)
+### What we worked on and why
+Before writing Python we need everyone on the same interpreter and package versions. We added a conda env that both of us create from one file, with the package list kept in `requirements.txt` so the future Docker image installs the same thing.
+
+### Key code
+`environment.yml`
+```yaml
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt
+```
+Conda only owns the Python version. Packages come from one pip list, so local dev and Docker can't drift apart.
+
+`requirements.txt`
+```text
+langgraph>=1.0,<2
+dbt-postgres>=1.8,<2
+```
+Ranges take minor and patch fixes but block major versions, which are the ones that break code. Undecided tools (LLM SDK, tracing, embedding library) are left out until their decisions land.
+
+### Diagram
+```mermaid
+flowchart LR
+  R[requirements.txt] --> E[environment.yml: conda env for local dev]
+  R --> D[Dockerfile: pip install for deploy]
+```
+
+### Decisions and concepts
+- [DECISIONS #20](../docs/DECISIONS.md): conda env with a shared pip requirements file (proposed)
+- CONCEPTS: [Reproducible environments](../docs/CONCEPTS.md#reproducible-environments-spec-file-vs-lock-file)
+
 ## What we'd explain differently next time
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.
