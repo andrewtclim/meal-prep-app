@@ -9,6 +9,7 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
+| [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -87,6 +88,36 @@ flowchart LR
 ### Decisions and concepts
 - [DECISIONS #10](../docs/DECISIONS.md): GCP with Cloud Run, state in GCS
 - CONCEPTS: [Terraform](../docs/CONCEPTS.md#terraform)
+
+## Session: 2026-10-09 (Spoonacular terms)
+### What we worked on and why
+We planned to store recipe ingredients in Postgres, so we checked whether Spoonacular's terms allow it. They don't. You may keep only the recipe id, title, and image URL. Anything else can be cached for at most 1 hour, only with written permission, and the ban covers "derived, hashed, or transformed data". That rules out saving its ingredients, mapping them to USDA, or training the substitution model on them. We dropped Spoonacular from the core build and made an open recipe dataset our only recipe source. Food.com on Kaggle is the first one to investigate.
+
+### Key code
+`docs/DECISIONS.md`
+```markdown
+### 5. Spoonacular is query-time only
+- **Status:** Superseded by #20
+...
+### 20. Drop Spoonacular from the core build
+- **Decision:** The app doesn't depend on Spoonacular. All recipes and ingredients come from data we're allowed to store ...
+```
+#5 had already said "never store Spoonacular data", but it still assumed live API calls for search and substitutions. Once we saw that even a derived USDA mapping is banned, using it live meant re-fetching every recipe on each plan build, with a 50-points-a-day free quota. #20 removes it, and #5 stays visible as history.
+
+### Diagram
+```mermaid
+flowchart LR
+  OD["Open recipe dataset (Food.com first)"] --> Raw["Postgres raw schema"]
+  USDA["USDA FoodData Central"] --> Raw
+  Raw --> dbt["dbt: clean recipes, ingredients matched to USDA"]
+  dbt --> App["Planner and substitution model"]
+  Sp["Spoonacular"] -.->|"not used: terms ban storing data"| App
+```
+
+### Decisions and concepts
+- [DECISIONS #20](../docs/DECISIONS.md): drop Spoonacular, supersedes #5
+- [DECISIONS #8](../docs/DECISIONS.md): recipe dataset, Food.com first candidate (license not confirmed yet)
+- Bigger picture: **data licensing** is part of picking any data source. The interview question is "are you allowed to store and train on this data?", and you answer it by reading the terms before you design the schema.
 
 ## What we'd explain differently next time
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.
