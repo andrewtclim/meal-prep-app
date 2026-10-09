@@ -39,7 +39,7 @@
 
 ### 5. Spoonacular is query-time only
 - **Date:** 2026-10-02
-- **Status:** Accepted
+- **Status:** Superseded by #20
 - **Decision:** Call Spoonacular live for search and substitution lookups. Never store its responses in Postgres or Neo4j.
 - **Why:** Their terms cap caching at 1 hour.
 - **Impact:** The persistent recipe store comes from an open dataset (see #8).
@@ -63,6 +63,7 @@
 - **Status:** Open
 - **Question:** Which open recipe dataset do we batch load? Candidates: Food.com (Kaggle), TheMealDB, others.
 - **Decide by:** End of week 1. Check license, size, and how clean the ingredient lists and instructions are.
+- **Update (2026-10-09):** Food.com (Kaggle) is the first candidate we're investigating. The dataset pages we checked list no license, and the data was scraped from Food.com for a research paper, so confirm the license before loading it. Fallbacks: TheMealDB (terms allow copying API content; free key covers development and education) and RecipeNLG (non-commercial research and education only). See #20.
 
 ### 9. Store data from Google Places
 - **Date:** 2026-10-02
@@ -136,7 +137,14 @@
 - **Why:** Learning is a core goal. A readable narrative of each week makes it easier to explain the stack later and doubles as portfolio writing.
 - **Impact:** Every PR updates that week's post. `review_sessions/` is not one of the source-of-truth files in #18; docs win if they disagree.
 
-### 20. Conda env with a shared pip requirements file
+### 20. Drop Spoonacular from the core build
+- **Date:** 2026-10-09
+- **Status:** Accepted
+- **Decision:** The app doesn't depend on Spoonacular. All recipes and ingredients come from data we're allowed to store: an open recipe dataset (#8), user-saved recipes, and USDA FoodData Central. Substitutions come only from our own model. Supersedes #5.
+- **Why:** Spoonacular's terms only let us keep the recipe id, title, and image URL. Everything else, ingredients included, may be cached for at most 1 hour and only with their written permission, and the ban covers "derived, hashed, or transformed data". So we couldn't store its ingredients, map them to USDA, or train on them. Using it live would mean re-fetching every recipe on each plan build (the free plan is 50 points a day and needs a backlink), and all data must be deleted if we stop using the API. Sources: spoonacular.com/food-api/terms and spoonacular.com/food-api/pricing, checked 2026-10-09.
+- **Impact:** The open dataset is the only recipe source for search and planning, so picking it (#8) blocks week 2. Spoonacular could come back later as an optional live search that stores only recipe ids, under a new decision.
+
+### 21. Conda env with a shared pip requirements file
 - **Date:** 2026-10-08
 - **Status:** Proposed
 - **Decision:** Local dev uses a conda env (`environment.yml`, Python 3.12) whose packages come from `requirements.txt`. Version ranges block major upgrades. LLM provider SDK, tracing (#12), and embedding library are added when those are decided.

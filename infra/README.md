@@ -32,7 +32,7 @@ gcloud storage buckets describe gs://meal-prep-app-510920-tfstate --format="valu
 
 ## Access
 
-Each teammate needs a project role that can read and write the state bucket (e.g. `roles/storage.objectAdmin` on the bucket) plus whatever roles the resources need. Ask the project owner to grant it.
+Each teammate needs a project role that can read and write the state bucket (e.g. `roles/storage.objectAdmin` on the bucket) plus whatever roles the resources need. 
 
 ## Running it
 

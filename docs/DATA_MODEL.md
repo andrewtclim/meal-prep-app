@@ -9,7 +9,7 @@
 | Postgres `raw` schema | Untouched source data from pipelines (DECISIONS #14) | Yes, by re-pulling sources |
 | Postgres (Supabase) | System of record for all entities, user data, conversations, and embeddings (pgvector) | No, back it up |
 | Neo4j | Relationships: substitutions, recipe ingredients, prep tasks, store categories | Yes, rebuilt from Postgres by the ingestion job |
-| External APIs (Spoonacular, Google Places) | Query-time only, never stored beyond what their terms allow | n/a |
+| External APIs (Google Places) | Query-time only, never stored beyond what their terms allow | n/a |
 
 **Rule of thumb:** if losing it would hurt, it lives in Postgres. Neo4j is a fast, derived view for graph-shaped questions.
 
