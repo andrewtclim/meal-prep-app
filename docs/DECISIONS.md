@@ -143,3 +143,10 @@
 - **Decision:** The app doesn't depend on Spoonacular. All recipes and ingredients come from data we're allowed to store: an open recipe dataset (#8), user-saved recipes, and USDA FoodData Central. Substitutions come only from our own model. Supersedes #5.
 - **Why:** Spoonacular's terms only let us keep the recipe id, title, and image URL. Everything else, ingredients included, may be cached for at most 1 hour and only with their written permission, and the ban covers "derived, hashed, or transformed data". So we couldn't store its ingredients, map them to USDA, or train on them. Using it live would mean re-fetching every recipe on each plan build (the free plan is 50 points a day and needs a backlink), and all data must be deleted if we stop using the API. Sources: spoonacular.com/food-api/terms and spoonacular.com/food-api/pricing, checked 2026-10-09.
 - **Impact:** The open dataset is the only recipe source for search and planning, so picking it (#8) blocks week 2. Spoonacular could come back later as an optional live search that stores only recipe ids, under a new decision.
+
+### 21. Conda env with a shared pip requirements file
+- **Date:** 2026-10-08
+- **Status:** Proposed
+- **Decision:** Local dev uses a conda env (`environment.yml`, Python 3.12) whose packages come from `requirements.txt`. Version ranges block major upgrades. LLM provider SDK, tracing (#12), and embedding library are added when those are decided.
+- **Why:** Conda is what we already use for DS work and handles the Python version. Keeping packages in `requirements.txt` lets the Docker image install the exact same list with pip.
+- **Impact:** Adding a dependency means editing `requirements.txt` in a PR; teammates run `conda env update -f environment.yml --prune`.

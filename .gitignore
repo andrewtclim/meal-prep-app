@@ -13,3 +13,6 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# macOS
+.DS_Store

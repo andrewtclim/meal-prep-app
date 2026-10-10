@@ -9,7 +9,9 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
-| [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
+| [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Merged |
+| [#7](https://github.com/andrewtclim/meal-prep-app/pull/7) | Shared conda env + requirements.txt (DECISIONS #21, proposed) | Open |
+| [#5](https://github.com/andrewtclim/meal-prep-app/pull/5) | Paul's GCP foundations: APIs, Artifact Registry, GitHub WIF. Reviewed by me, changes requested | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -89,6 +91,39 @@ flowchart LR
 - [DECISIONS #10](../docs/DECISIONS.md): GCP with Cloud Run, state in GCS
 - CONCEPTS: [Terraform](../docs/CONCEPTS.md#terraform)
 
+## Session: 2026-10-08 (dev environment)
+### What we worked on and why
+Before writing Python we need everyone on the same interpreter and package versions. We added a conda env that both of us create from one file, with the package list kept in `requirements.txt` so the future Docker image installs the same thing.
+
+### Key code
+`environment.yml`
+```yaml
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt
+```
+Conda only owns the Python version. Packages come from one pip list, so local dev and Docker can't drift apart.
+
+`requirements.txt`
+```text
+langgraph>=1.0,<2
+dbt-postgres>=1.8,<2
+```
+Ranges take minor and patch fixes but block major versions, which are the ones that break code. Undecided tools (LLM SDK, tracing, embedding library) are left out until their decisions land.
+
+### Diagram
+```mermaid
+flowchart LR
+  R[requirements.txt] --> E[environment.yml: conda env for local dev]
+  R --> D[Dockerfile: pip install for deploy]
+```
+
+### Decisions and concepts
+- [DECISIONS #21](../docs/DECISIONS.md): conda env with a shared pip requirements file (proposed)
+- CONCEPTS: [Reproducible environments](../docs/CONCEPTS.md#reproducible-environments-spec-file-vs-lock-file)
+
 ## Session: 2026-10-09 (Spoonacular terms)
 ### What we worked on and why
 We planned to store recipe ingredients in Postgres, so we checked whether Spoonacular's terms allow it. They don't. You may keep only the recipe id, title, and image URL. Anything else can be cached for at most 1 hour, only with written permission, and the ban covers "derived, hashed, or transformed data". That rules out saving its ingredients, mapping them to USDA, or training the substitution model on them. We dropped Spoonacular from the core build and made an open recipe dataset our only recipe source. Food.com on Kaggle is the first one to investigate.
@@ -118,6 +153,32 @@ flowchart LR
 - [DECISIONS #20](../docs/DECISIONS.md): drop Spoonacular, supersedes #5
 - [DECISIONS #8](../docs/DECISIONS.md): recipe dataset, Food.com first candidate (license not confirmed yet)
 - Bigger picture: **data licensing** is part of picking any data source. The interview question is "are you allowed to store and train on this data?", and you answer it by reading the terms before you design the schema.
+
+## Session: 2026-10-09 (reviewing GCP foundations)
+### What we worked on and why
+Reviewed Paul's PR #5, which enables GCP APIs, creates an Artifact Registry repo for Docker images, and sets up Workload Identity Federation (WIF) so GitHub Actions can push images without a stored key. Nothing is applied yet, so merging only puts code on `main`. We requested two changes before merge and left the rest as non-blocking comments.
+
+### Key code
+`infra/github_wif.tf` (from PR #5, with our requested change)
+```hcl
+attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.ref == \"refs/heads/main\""
+```
+The provider's condition decides which GitHub tokens Google accepts. As written, any branch or PR workflow in our repo could act as `github-deploy`. Adding the `main` ref means only merged, reviewed code can authenticate. The tradeoff is that PR workflows can't authenticate at all, which is fine until a workflow exists. A `principalSet` member can only match one attribute, so the combined repo-and-branch rule has to live in the provider condition.
+
+### Diagram
+```mermaid
+flowchart LR
+  GH["GitHub Actions job"] -->|"OIDC token: repo + branch"| P["WIF provider: accepts only our repo on main"]
+  P --> SA["github-deploy service account"]
+  SA -->|"artifactregistry.writer"| AR["Artifact Registry: api"]
+```
+
+### Decisions and concepts
+- Requested a new DECISIONS entry (#22, since #21 is in PR #7) for keyless auth over a JSON key, to be written by Paul.
+- Least privilege: split into one account for build and push and one for deploy once Cloud Run deploy permissions arrive. Split by privilege level, not by every task.
+- CI is a check, not a lock. Real enforcement is branch protection on `main` plus the `main`-only condition. Branch protection is a GitHub setting, not Terraform, and is a question for the team meeting.
+- CONCEPTS (in PR #5): [Workload Identity Federation](../docs/CONCEPTS.md#workload-identity-federation)
+- Interview question: how does a CI job authenticate to a cloud provider with no stored secret?
 
 ## What we'd explain differently next time
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.

@@ -17,3 +17,9 @@
 - **Where we use it:** `infra/` (provider, variables, GCS remote state backend). `main.tf` is still empty; resources come in a follow-up PR.
 - **Why this over the alternative:** Clicking in the GCP console is faster once, but it is not reviewable in a PR and drifts between teammates. Terraform keeps one shared definition.
 - **Common question:** Where does state live? In the GCS bucket configured in `infra/providers.tf`, not in git.
+
+### Reproducible environments (spec file vs lock file)
+- **What it is:** A spec file lists the packages we need with allowed version ranges; a lock file records the exact versions one install resolved to. Everyone builds their env from the same spec, so "works on my machine" bugs from mismatched versions go away. Conda manages the Python interpreter; pip installs the packages.
+- **Where we use it:** `environment.yml` (Python version, pulls in the pip list), `requirements.txt` (package ranges, also used by the Dockerfile later).
+- **Why this over the alternative:** Listing every package in `environment.yml` alone would leave Docker (pip only) with a second list that drifts. A plain `pip freeze` dump pins everything but mixes our real dependencies with their sub-dependencies, so nobody can tell what we chose. We have no lock file yet; add one (e.g. `pip-compile` or `uv`) if a sub-dependency update ever breaks CI.
+- **Common question:** Why ranges like `>=1.0,<2` instead of exact pins? Minor and patch releases bring fixes and shouldn't break us; major versions can. Exact pins belong in a lock file, not the spec.
