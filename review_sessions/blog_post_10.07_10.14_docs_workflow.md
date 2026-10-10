@@ -11,6 +11,7 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
 | [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Merged |
 | [#7](https://github.com/andrewtclim/meal-prep-app/pull/7) | Shared conda env + requirements.txt (DECISIONS #21, proposed) | Open |
+| [#5](https://github.com/andrewtclim/meal-prep-app/pull/5) | Paul's GCP foundations: APIs, Artifact Registry, GitHub WIF. Reviewed by me, changes requested | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -152,6 +153,32 @@ flowchart LR
 - [DECISIONS #20](../docs/DECISIONS.md): drop Spoonacular, supersedes #5
 - [DECISIONS #8](../docs/DECISIONS.md): recipe dataset, Food.com first candidate (license not confirmed yet)
 - Bigger picture: **data licensing** is part of picking any data source. The interview question is "are you allowed to store and train on this data?", and you answer it by reading the terms before you design the schema.
+
+## Session: 2026-10-09 (reviewing GCP foundations)
+### What we worked on and why
+Reviewed Paul's PR #5, which enables GCP APIs, creates an Artifact Registry repo for Docker images, and sets up Workload Identity Federation (WIF) so GitHub Actions can push images without a stored key. Nothing is applied yet, so merging only puts code on `main`. We requested two changes before merge and left the rest as non-blocking comments.
+
+### Key code
+`infra/github_wif.tf` (from PR #5, with our requested change)
+```hcl
+attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.ref == \"refs/heads/main\""
+```
+The provider's condition decides which GitHub tokens Google accepts. As written, any branch or PR workflow in our repo could act as `github-deploy`. Adding the `main` ref means only merged, reviewed code can authenticate. The tradeoff is that PR workflows can't authenticate at all, which is fine until a workflow exists. A `principalSet` member can only match one attribute, so the combined repo-and-branch rule has to live in the provider condition.
+
+### Diagram
+```mermaid
+flowchart LR
+  GH["GitHub Actions job"] -->|"OIDC token: repo + branch"| P["WIF provider: accepts only our repo on main"]
+  P --> SA["github-deploy service account"]
+  SA -->|"artifactregistry.writer"| AR["Artifact Registry: api"]
+```
+
+### Decisions and concepts
+- Requested a new DECISIONS entry (#22, since #21 is in PR #7) for keyless auth over a JSON key, to be written by Paul.
+- Least privilege: split into one account for build and push and one for deploy once Cloud Run deploy permissions arrive. Split by privilege level, not by every task.
+- CI is a check, not a lock. Real enforcement is branch protection on `main` plus the `main`-only condition. Branch protection is a GitHub setting, not Terraform, and is a question for the team meeting.
+- CONCEPTS (in PR #5): [Workload Identity Federation](../docs/CONCEPTS.md#workload-identity-federation)
+- Interview question: how does a CI job authenticate to a cloud provider with no stored secret?
 
 ## What we'd explain differently next time
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.
