@@ -17,3 +17,9 @@
 - **Where we use it:** `infra/` (provider, variables, GCS remote state backend). `main.tf` is still empty; resources come in a follow-up PR.
 - **Why this over the alternative:** Clicking in the GCP console is faster once, but it is not reviewable in a PR and drifts between teammates. Terraform keeps one shared definition.
 - **Common question:** Where does state live? In the GCS bucket configured in `infra/providers.tf`, not in git.
+
+### Data profiling
+- **What it is:** Checking a dataset against what the app needs before building on it: which fields exist, how much is missing or malformed, how many duplicates, and how big it is. The output is a short report, not a pipeline.
+- **Where we use it:** a local audit script, not in the repo, for the Food.com datasets (DECISIONS #8). Its findings are summarized there.
+- **Why this over the alternative:** Loading the data first and finding gaps later costs a schema and a pipeline built on the wrong source. Profiling found that neither dataset has ingredient units before we wrote any migration.
+- **Common question:** How did you know the data was fit for purpose before building on it? You list the fields the app needs, then measure each one's coverage and quality, and include checks that can surprise you (e.g. whether two parallel arrays line up).

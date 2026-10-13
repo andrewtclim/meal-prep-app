@@ -64,6 +64,10 @@
 - **Question:** Which open recipe dataset do we batch load? Candidates: Food.com (Kaggle), TheMealDB, others.
 - **Decide by:** End of week 1. Check license, size, and how clean the ingredient lists and instructions are.
 - **Update (2026-10-09):** Food.com (Kaggle) is the first candidate we're investigating. The dataset pages we checked list no license, and the data was scraped from Food.com for a research paper, so confirm the license before loading it. Fallbacks: TheMealDB (terms allow copying API content; free key covers development and education) and RecipeNLG (non-commercial research and education only). See #20.
+- **Update (2026-10-12):** Audited the two Food.com Kaggle datasets: the [2019 one](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions) (232k recipes) and the [more recent 2020 one](https://www.kaggle.com/datasets/irkaal/foodcom-recipes-and-reviews) (523k recipes). Both are scrapes of the same site, and the 2020 one contains nearly all of the 2019 one's recipes. Both have names, ingredients, steps, times, and tags, but **neither has ingredient units**. The 2019 one has no quantities at all. The 2020 one has bare numbers with no units, and in 78% of rows they can't be matched to ingredients. Licensing is unresolved: the Kaggle labels (`copyright-authors` vs `CC0`) are the uploaders' claims, and Food.com's own terms are unread. Options, in order:
+  1. Read Food.com's terms, or ask them for permission.
+  2. Audit TheMealDB and RecipeNLG for units and license.
+  3. If we proceed with the 2020 dataset, plan at the ingredient level without amounts (no grocery totals) and load only a weeknight-dinner subset (~69k recipes, to fit the 500 MB tier).
 
 ### 9. Store data from Google Places
 - **Date:** 2026-10-02
