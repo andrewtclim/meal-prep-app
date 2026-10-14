@@ -19,7 +19,7 @@
 | Create repo with `docs/` and `CLAUDE.md`, connect Claude Project | must | | |
 | Decide cloud provider (DECISIONS #10) | must | | done |
 | GitHub Actions: lint + pytest on every PR | must | | |
-| Dockerized FastAPI hello endpoint | must | | |
+| Dockerized FastAPI hello endpoint | must | Andrew | in progress: app, Dockerfile, and test done; `.dockerignore` next |
 | CD: merge to main auto-deploys the endpoint | must | | |
 | Create Supabase and Neo4j free tier projects (dev only) | must | | |
 | Set billing alerts, check free tier limits for Supabase and Neo4j | must | | |
