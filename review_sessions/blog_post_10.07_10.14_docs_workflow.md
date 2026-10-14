@@ -10,7 +10,8 @@ This week set up how we document the project (CONCEPTS.md joined the source-of-t
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
 | [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
-| [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Open |
+| [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Merged |
+| [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | FastAPI `/health` endpoint with Dockerfile and test (draft, `.dockerignore` still to come) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
