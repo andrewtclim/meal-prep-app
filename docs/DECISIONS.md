@@ -39,7 +39,7 @@
 
 ### 5. Spoonacular is query-time only
 - **Date:** 2026-10-02
-- **Status:** Accepted
+- **Status:** Superseded by #20
 - **Decision:** Call Spoonacular live for search and substitution lookups. Never store its responses in Postgres or Neo4j.
 - **Why:** Their terms cap caching at 1 hour.
 - **Impact:** The persistent recipe store comes from an open dataset (see #8).
@@ -63,6 +63,11 @@
 - **Status:** Open
 - **Question:** Which open recipe dataset do we batch load? Candidates: Food.com (Kaggle), TheMealDB, others.
 - **Decide by:** End of week 1. Check license, size, and how clean the ingredient lists and instructions are.
+- **Update (2026-10-09):** Food.com (Kaggle) is the first candidate we're investigating. The dataset pages we checked list no license, and the data was scraped from Food.com for a research paper, so confirm the license before loading it. Fallbacks: TheMealDB (terms allow copying API content; free key covers development and education) and RecipeNLG (non-commercial research and education only). See #20.
+- **Update (2026-10-12):** Audited the two Food.com Kaggle datasets: the [2019 one](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions) (232k recipes) and the [more recent 2020 one](https://www.kaggle.com/datasets/irkaal/foodcom-recipes-and-reviews) (523k recipes). Both are scrapes of the same site, and the 2020 one contains nearly all of the 2019 one's recipes. Both have names, ingredients, steps, times, and tags, but **neither has ingredient units**. The 2019 one has no quantities at all. The 2020 one has bare numbers with no units, and in 78% of rows they can't be matched to ingredients. Licensing is unresolved: the Kaggle labels (`copyright-authors` vs `CC0`) are the uploaders' claims, and Food.com's own terms are unread. Options, in order:
+  1. Read Food.com's terms, or ask them for permission.
+  2. Audit TheMealDB and RecipeNLG for units and license.
+  3. If we proceed with the 2020 dataset, plan at the ingredient level without amounts (no grocery totals) and load only a weeknight-dinner subset (~69k recipes, to fit the 500 MB tier).
 
 ### 9. Store data from Google Places
 - **Date:** 2026-10-02
@@ -135,3 +140,10 @@
 - **Decision:** Each week (Wednesday to Wednesday) gets a blog-style post in `review_sessions/` covering the sessions, key code with reasoning, diagrams, and PRs. Format is set in CLAUDE.md.
 - **Why:** Learning is a core goal. A readable narrative of each week makes it easier to explain the stack later and doubles as portfolio writing.
 - **Impact:** Every PR updates that week's post. `review_sessions/` is not one of the source-of-truth files in #18; docs win if they disagree.
+
+### 20. Drop Spoonacular from the core build
+- **Date:** 2026-10-09
+- **Status:** Accepted
+- **Decision:** The app doesn't depend on Spoonacular. All recipes and ingredients come from data we're allowed to store: an open recipe dataset (#8), user-saved recipes, and USDA FoodData Central. Substitutions come only from our own model. Supersedes #5.
+- **Why:** Spoonacular's terms only let us keep the recipe id, title, and image URL. Everything else, ingredients included, may be cached for at most 1 hour and only with their written permission, and the ban covers "derived, hashed, or transformed data". So we couldn't store its ingredients, map them to USDA, or train on them. Using it live would mean re-fetching every recipe on each plan build (the free plan is 50 points a day and needs a backlink), and all data must be deleted if we stop using the API. Sources: spoonacular.com/food-api/terms and spoonacular.com/food-api/pricing, checked 2026-10-09.
+- **Impact:** The open dataset is the only recipe source for search and planning, so picking it (#8) blocks week 2. Spoonacular could come back later as an optional live search that stores only recipe ids, under a new decision.

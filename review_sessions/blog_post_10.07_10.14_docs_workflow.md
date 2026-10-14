@@ -1,7 +1,7 @@
 # Week of 10.07 to 10.14: Docs workflow
 
 ## Summary
-No app code yet. This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts) and chose GCP with a Terraform scaffold under `infra/`.
+No app code yet. This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts), chose GCP with a Terraform scaffold under `infra/`, and audited the Food.com recipe datasets, which turned out to lack ingredient units.
 
 ## PRs this week
 | PR | What it did | State |
@@ -9,6 +9,8 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
+| [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
+| [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -87,6 +89,65 @@ flowchart LR
 ### Decisions and concepts
 - [DECISIONS #10](../docs/DECISIONS.md): GCP with Cloud Run, state in GCS
 - CONCEPTS: [Terraform](../docs/CONCEPTS.md#terraform)
+
+## Session: 2026-10-09 (Spoonacular terms)
+### What we worked on and why
+We planned to store recipe ingredients in Postgres, so we checked whether Spoonacular's terms allow it. They don't. You may keep only the recipe id, title, and image URL. Anything else can be cached for at most 1 hour, only with written permission, and the ban covers "derived, hashed, or transformed data". That rules out saving its ingredients, mapping them to USDA, or training the substitution model on them. We dropped Spoonacular from the core build and made an open recipe dataset our only recipe source. Food.com on Kaggle is the first one to investigate.
+
+### Key code
+`docs/DECISIONS.md`
+```markdown
+### 5. Spoonacular is query-time only
+- **Status:** Superseded by #20
+...
+### 20. Drop Spoonacular from the core build
+- **Decision:** The app doesn't depend on Spoonacular. All recipes and ingredients come from data we're allowed to store ...
+```
+#5 had already said "never store Spoonacular data", but it still assumed live API calls for search and substitutions. Once we saw that even a derived USDA mapping is banned, using it live meant re-fetching every recipe on each plan build, with a 50-points-a-day free quota. #20 removes it, and #5 stays visible as history.
+
+### Diagram
+```mermaid
+flowchart LR
+  OD["Open recipe dataset (Food.com first)"] --> Raw["Postgres raw schema"]
+  USDA["USDA FoodData Central"] --> Raw
+  Raw --> dbt["dbt: clean recipes, ingredients matched to USDA"]
+  dbt --> App["Planner and substitution model"]
+  Sp["Spoonacular"] -.->|"not used: terms ban storing data"| App
+```
+
+### Decisions and concepts
+- [DECISIONS #20](../docs/DECISIONS.md): drop Spoonacular, supersedes #5
+- [DECISIONS #8](../docs/DECISIONS.md): recipe dataset, Food.com first candidate (license not confirmed yet)
+- Bigger picture: **data licensing** is part of picking any data source. The interview question is "are you allowed to store and train on this data?", and you answer it by reading the terms before you design the schema.
+
+## Session: 2026-10-12 (Food.com dataset audit)
+### What we worked on and why
+Before building a schema on a recipe dataset, we profiled the two Food.com candidates on Kaggle: the [2019 one](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions) (232k recipes) and the [more recent 2020 one](https://www.kaggle.com/datasets/irkaal/foodcom-recipes-and-reviews) (523k). We listed what the app needs per recipe (ids, ingredients, quantity and unit, steps, times, tags) and measured each field. Both are scrapes of the same site, and the 2020 one contains nearly all of the 2019 one's recipes. Both have most of what we need, but **neither has units**. The 2019 one has no quantities at all. The 2020 one has bare numbers, and in 78% of rows the quantity list and ingredient list differ in length, so we can't tell which quantity belongs to which ingredient. The steps can't fill the gap either: only 4% of recipes mention enough amounts to cover half their ingredients.
+
+### Key code
+Quantity and ingredient lists in the 2020 dataset (local audit script, not in the repo)
+```python
+diff = q.map(len) - ing.map(len)
+# more quantities than ingredients: 385,756 rows; fewer: 21,780; equal: 114,981
+```
+A first check showed 78% of rows mismatched, and our sample printout had hidden it because `zip()` silently truncates the longer list. Counting the direction of the mismatch showed it isn't just missing units: the pairing itself is unreliable.
+
+### Diagram
+```mermaid
+flowchart LR
+  Need["App needs: ingredient + quantity + unit"] --> A["2019 dataset: names only"]
+  Need --> B["2020 dataset: numbers, no units, mostly misaligned"]
+  A --> Q{"License + units?"}
+  B --> Q
+  Q --> O1["Read Food.com terms / ask permission"]
+  Q --> O2["Audit TheMealDB, RecipeNLG"]
+  Q --> O3["Ingredient-level MVP, dinner subset"]
+```
+
+### Decisions and concepts
+- [DECISIONS #8](../docs/DECISIONS.md): still open, with an update listing the options
+- CONCEPTS: [Data profiling](../docs/CONCEPTS.md#data-profiling)
+- Bigger picture: Kaggle license labels are the uploader's claim. Both datasets copy the same Food.com content, and we couldn't retrieve Food.com's own terms, so the license question is unresolved. We also decided not to scrape food.com directly, since its robots.txt disallows AI crawlers.
 
 ## What we'd explain differently next time
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.
