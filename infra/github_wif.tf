@@ -33,6 +33,8 @@ resource "google_service_account" "github_deploy" {
   account_id   = "github-deploy"
   display_name = "GitHub Actions deploy"
   description  = "Pushes images to Artifact Registry; Cloud Run roles come in a later PR"
+
+  depends_on = [google_project_service.services]
 }
 
 resource "google_service_account_iam_member" "github_wif" {

@@ -1,4 +1,4 @@
-// For each API name in this list, enable it in the project var.project_id
+# For each API name in this list, enable it in the project var.project_id
 
 resource "google_project_service" "services" {
   for_each = toset([
