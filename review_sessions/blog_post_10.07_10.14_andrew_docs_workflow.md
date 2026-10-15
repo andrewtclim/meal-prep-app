@@ -1,4 +1,4 @@
-# Week of 10.07 to 10.14: Docs workflow
+# Week of 10.07 to 10.14: Docs workflow (Andrew)
 
 ## Summary
 This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts), chose GCP with a Terraform scaffold under `infra/`, audited the Food.com recipe datasets, which turned out to lack ingredient units, and wrote the first app code: a FastAPI `/health` endpoint with a Dockerfile and a test.
