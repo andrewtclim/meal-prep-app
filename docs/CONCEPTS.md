@@ -57,3 +57,9 @@
 - **What it is:** Writing exact versions (`fastapi==0.143.0`) so every build installs the same libraries. Dev-only libraries (pytest, httpx) live in `requirements-dev.txt`, which includes the production file with `-r`.
 - **Where we use it:** `requirements.txt` (installed in the image) and `requirements-dev.txt` (local and CI).
 - **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Pins don't update themselves, so upgrades are a deliberate edit. PR #7 (the shared conda env) proposes moving to version ranges, as its own DECISIONS entry.
+
+### Docker build context and .dockerignore
+- **What it is:** The build context is the folder Docker can `COPY` from when you run `docker build .`. `.dockerignore` lists paths that are never visible to the build, the same way `.gitignore` works for git. It keeps secrets (`.env`), the git history, and large local folders out of the image and out of cache checks.
+- **Where we use it:** `.dockerignore` at the repo root. It hides docs, tests, infra, and local-only folders (e.g. a 1.1 GB audit folder) from the build.
+- **Why this over the alternative:** Without it, a future `COPY . .` would pull `.env` and the whole repo into the image. Today it changes nothing measurable: BuildKit (Docker's current builder) only uploads files a `COPY` actually asks for, and our context was ~800 bytes with and without the file. So this is insurance, not a speedup. We exclude `tests/`; remove that line if CI ever runs pytest inside the container.
+- **Common question:** What is the difference between `.gitignore` and `.dockerignore`? Different tools, separate files: git decides what is versioned, Docker decides what the build can see. They overlap but neither reads the other.
