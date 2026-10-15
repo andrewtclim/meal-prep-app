@@ -56,4 +56,4 @@
 ### Dependency pinning
 - **What it is:** Writing exact versions (`fastapi==0.143.0`) so every build installs the same libraries. Dev-only libraries (pytest, httpx) live in `requirements-dev.txt`, which includes the production file with `-r`.
 - **Where we use it:** `requirements.txt` (installed in the image) and `requirements-dev.txt` (local and CI).
-- **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Pins don't update themselves, so upgrades are a deliberate edit. We may move to version ranges later; that would be a new DECISIONS entry.
+- **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Pins don't update themselves, so upgrades are a deliberate edit. PR #7 (the shared conda env) proposes moving to version ranges, as its own DECISIONS entry.

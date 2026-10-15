@@ -11,7 +11,7 @@ This week set up how we document the project (CONCEPTS.md joined the source-of-t
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
 | [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
 | [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Merged |
-| [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | FastAPI `/health` endpoint with Dockerfile and test (draft, `.dockerignore` still to come) | Open |
+| [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | FastAPI `/health` endpoint with Dockerfile and test (`.dockerignore` follows in the next PR) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -198,6 +198,18 @@ flowchart LR
 - CONCEPTS: [FastAPI and routers](../docs/CONCEPTS.md#fastapi-and-routers), [Docker image, container, and layers](../docs/CONCEPTS.md#docker-image-container-and-layers), [In-process API testing](../docs/CONCEPTS.md#in-process-api-testing-testclient), [Dependency pinning](../docs/CONCEPTS.md#dependency-pinning)
 - Open for the team: our pinned `requirements.txt` will collide with the one on the unmerged `chore/conda-env` branch, which uses version ranges and a much larger package list. Whether the Docker image installs that whole list or a trimmed one affects image size.
 - Next: `.dockerignore`, then CI (lint + pytest), then CD.
+
+## Session: 2026-10-14
+### What we worked on and why
+Got PR #10 ready for review. We merged `origin/main` into the branch first so the diff only shows our work, then fixed two things the merge exposed. The `.dockerignore` moves to its own PR so each PR stays one change.
+
+### Key code
+`git rm -r --cached app/__pycache__ app/routes/__pycache__ tests/__pycache__`
+
+My PR #11 committed these compiled caches by accident: I staged with `git add -A` on `main`, where `.gitignore` did not yet ignore them. `--cached` untracks them without deleting the files. Stage by name when the working tree has stray files.
+
+### Decisions and concepts
+- Paul's WIF decision took DECISIONS #21 on `main`, so the conda env decision in PR #7 must be renumbered to #22 before it merges. We take the next number from `origin/main`.
 
 ## What we'd explain differently next time
 Why `requirements.txt` and `requirements-dev.txt` are separate (the image shouldn't carry test tools), and why a stray `(.venv)` on the prompt made `python -m pytest` use the wrong Python.
