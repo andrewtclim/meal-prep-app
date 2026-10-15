@@ -148,9 +148,9 @@
 - **Why:** Spoonacular's terms only let us keep the recipe id, title, and image URL. Everything else, ingredients included, may be cached for at most 1 hour and only with their written permission, and the ban covers "derived, hashed, or transformed data". So we couldn't store its ingredients, map them to USDA, or train on them. Using it live would mean re-fetching every recipe on each plan build (the free plan is 50 points a day and needs a backlink), and all data must be deleted if we stop using the API. Sources: spoonacular.com/food-api/terms and spoonacular.com/food-api/pricing, checked 2026-10-09.
 - **Impact:** The open dataset is the only recipe source for search and planning, so picking it (#8) blocks week 2. Spoonacular could come back later as an optional live search that stores only recipe ids, under a new decision.
 
-### 22. Keyless CI auth to GCP (Workload Identity Federation)
-- **Date:** 2026-10-13
-- **Status:** Proposed
+### 21. Keyless CI auth to GCP (Workload Identity Federation)
+- **Date:** 2026-10-14
+- **Status:** Accepted
 - **Decision:** GitHub Actions authenticates to GCP with Workload Identity Federation and impersonates the `github-deploy` service account. We do not store a service-account JSON key in GitHub Secrets. The WIF provider only accepts tokens from `andrewtclim/meal-prep-app` on `refs/heads/main`.
 - **Why:** Long-lived keys are easy to leak and slow to rotate. WIF issues short-lived credentials scoped to our repo and branch. Restricting to `main` means feature-branch or PR workflows cannot push images; we can split push vs deploy accounts later if needed.
 - **Impact:** `infra/github_wif.tf` and `infra/outputs.tf`. A later CD workflow will use the WIF provider name and SA email from Terraform outputs. PR workflows cannot use this provider until we add a separate path.
