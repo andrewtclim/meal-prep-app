@@ -1,7 +1,7 @@
 # Week of 10.07 to 10.14: Docs workflow (Andrew)
 
 ## Summary
-No app code yet. This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts), chose GCP with a Terraform scaffold under `infra/`, and audited the Food.com recipe datasets, which turned out to lack ingredient units.
+This week set up how we document the project (CONCEPTS.md joined the source-of-truth docs, and we started these weekly review posts), chose GCP with a Terraform scaffold under `infra/`, audited the Food.com recipe datasets, which turned out to lack ingredient units, and wrote the first app code: a FastAPI `/health` endpoint with a Dockerfile and a test.
 
 ## PRs this week
 | PR | What it did | State |
@@ -10,7 +10,8 @@ No app code yet. This week set up how we document the project (CONCEPTS.md joine
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold, accepts GCP (DECISIONS #10) | Merged |
 | [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drops Spoonacular from the core build, Food.com first dataset candidate (DECISIONS #20) | Open |
-| [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Open |
+| [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | Records the Food.com dataset audit in DECISIONS #8 | Merged |
+| [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | FastAPI `/health` endpoint with Dockerfile and test (`.dockerignore` follows in the next PR) | Open |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -149,5 +150,68 @@ flowchart LR
 - CONCEPTS: [Data profiling](../docs/CONCEPTS.md#data-profiling)
 - Bigger picture: Kaggle license labels are the uploader's claim. Both datasets copy the same Food.com content, and we couldn't retrieve Food.com's own terms, so the license question is unresolved. We also decided not to scrape food.com directly, since its robots.txt disallows AI crawlers.
 
+## Session: 2026-10-13 (FastAPI hello endpoint and Docker)
+### What we worked on and why
+Week 1 needs a live endpoint deployed on merge to main, so the first step was a tiny API packaged in Docker. We built it in small steps: a FastAPI app with `GET /health`, a pinned `requirements.txt`, a `Dockerfile`, and a pytest test. We ran it three ways: with uvicorn directly, in a container (`docker build`, then `docker run -p 8000:8000`), and in memory through the test. The `.dockerignore` is not written yet and is tomorrow's task.
+
+### Key code
+`app/routes/health.py` and `app/main.py`
+```python
+@router.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+app = FastAPI()
+app.include_router(health.router)
+```
+The decorator binds `GET /health` to the function. Endpoints live in a router file, and `main.py` only creates the app and plugs routers in. Without the `include_router` line the function exists but the app returns 404. We split into `routes/` for one endpoint on purpose, so we can see where later endpoints (pantry, plan) will go.
+
+`Dockerfile`
+```dockerfile
+FROM python:3.12
+WORKDIR /code
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app/ app/
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+Dependencies install before the code is copied, so editing code reuses the cached install layer. `RUN` happens at build time, while `CMD` is recorded at build and executed at `docker run`. `--host 0.0.0.0` is needed because `127.0.0.1` inside a container is unreachable from the Mac. We started from the full Python image to avoid missing-compiler failures and can move to `-slim` once dependencies settle. The Python version is 3.12 to match the proposed conda `environment.yml` (DECISIONS #21).
+
+`tests/test_health.py`
+```python
+client = TestClient(app)
+assert client.get("/health").json() == {"status": "ok"}
+```
+`TestClient` calls the app in memory with no server or Docker. It proves the code is right, but not that the container's port mapping works. Our browser check covered that.
+
+### Diagram
+```mermaid
+flowchart LR
+  DF[Dockerfile] -->|docker build| IMG[Image]
+  IMG -->|docker run -p 8000:8000| C[Container: uvicorn]
+  B[Browser on Mac port 8000] --> C
+  T[pytest TestClient] -.->|in memory, no container| APP[app/main.py]
+```
+
+### Decisions and concepts
+- No new DECISIONS entry. Python 3.12 follows the proposed #21, so if #21 changes the `FROM` line changes too.
+- CONCEPTS: [FastAPI and routers](../docs/CONCEPTS.md#fastapi-and-routers), [Docker image, container, and layers](../docs/CONCEPTS.md#docker-image-container-and-layers), [In-process API testing](../docs/CONCEPTS.md#in-process-api-testing-testclient), [Dependency pinning](../docs/CONCEPTS.md#dependency-pinning)
+- Open for the team: our pinned `requirements.txt` will collide with the one on the unmerged `chore/conda-env` branch, which uses version ranges and a much larger package list. Whether the Docker image installs that whole list or a trimmed one affects image size.
+- Next: `.dockerignore`, then CI (lint + pytest), then CD.
+
+## Session: 2026-10-14
+### What we worked on and why
+Got PR #10 ready for review. We merged `origin/main` into the branch first so the diff only shows our work, then fixed two things the merge exposed. The `.dockerignore` moves to its own PR so each PR stays one change.
+
+### Key code
+`git rm -r --cached app/__pycache__ app/routes/__pycache__ tests/__pycache__`
+
+My PR #11 committed these compiled caches by accident: I staged with `git add -A` on `main`, where `.gitignore` did not yet ignore them. `--cached` untracks them without deleting the files. Stage by name when the working tree has stray files.
+
+### Decisions and concepts
+- Paul's WIF decision took DECISIONS #21 on `main`, so the conda env decision in PR #7 must be renumbered to #22 before it merges. We take the next number from `origin/main`.
+
 ## What we'd explain differently next time
+Why `requirements.txt` and `requirements-dev.txt` are separate (the image shouldn't carry test tools), and why a stray `(.venv)` on the prompt made `python -m pytest` use the wrong Python.
+
 State file vs state bucket: encryption and keeping it out of git are about the state *file*; the bucket can't live in `main.tf` because of the chicken-and-egg with `init`.

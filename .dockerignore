@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+tests/
+docs/
+review_sessions/
+infra/
+images/
+recipe_db_audit/
+CLAUDE*.md
