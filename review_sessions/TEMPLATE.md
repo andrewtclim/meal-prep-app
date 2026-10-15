@@ -1,4 +1,4 @@
-# Week of MM.DD to MM.DD: <Topic>
+# Week of MM.DD to MM.DD: <Topic> (<Name>)
 
 ## Summary
 Two or three sentences on what this week moved forward.
