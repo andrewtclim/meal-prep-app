@@ -14,5 +14,11 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
 # macOS
 .DS_Store
