@@ -1,7 +1,7 @@
 # Week of 10.07 to 10.14: Week 1 setup
 
 ## Summary
-No app code yet. This week locked down how we document the project (CONCEPTS.md, weekly review posts) and stood up cloud infra: a GCP project with Terraform remote state, scaffold PR #3 for `infra/`, then foundations on `infra/gcp-foundations` (enable APIs, Artifact Registry repo `api`, GitHub Workload Identity Federation for keyless image pushes). Cloud Run and the Actions workflow are later PRs. We have not `terraform apply`’d the foundations resources yet.
+No app code yet. This week locked down how we document the project (CONCEPTS.md, weekly review posts) and stood up cloud infra: a GCP project with Terraform remote state, scaffold PR #3 for `infra/`, then foundations on `infra/gcp-foundations` (enable APIs, Artifact Registry repo `api`, GitHub Workload Identity Federation for keyless image pushes). We addressed PR #5 review feedback (main-only WIF, DECISIONS #22) and ran `terraform plan` (11 to add, not applied). Cloud Run and the Actions workflow are later PRs. Spoonacular was dropped from the core build on `main` (DECISIONS #20).
 
 ## PRs this week
 | PR | What it did | State |
@@ -9,7 +9,9 @@ No app code yet. This week locked down how we document the project (CONCEPTS.md,
 | [#2](https://github.com/andrewtclim/meal-prep-app/pull/2) | Adds CONCEPTS.md to the source-of-truth docs (DECISIONS #18) | Merged |
 | [#3](https://github.com/andrewtclim/meal-prep-app/pull/3) | Terraform GCP scaffold under `infra/`; accepts DECISIONS #10 (GCP) | Merged |
 | [#4](https://github.com/andrewtclim/meal-prep-app/pull/4) | Adds weekly review posts to CLAUDE.md (DECISIONS #19) | Merged |
-| (pending) `infra/gcp-foundations` | APIs, Artifact Registry, GitHub WIF, CONCEPTS, this post | Open / not pushed yet |
+| [#5](https://github.com/andrewtclim/meal-prep-app/pull/5) | GCP foundations: APIs, Artifact Registry, GitHub WIF; review fixes | Open (changes requested, then re-requested) |
+| [#6](https://github.com/andrewtclim/meal-prep-app/pull/6) | Drop Spoonacular from core build (DECISIONS #20) | Merged (via related work on main) |
+| [#8](https://github.com/andrewtclim/meal-prep-app/pull/8) / [#9](https://github.com/andrewtclim/meal-prep-app/pull/9) | `.DS_Store` gitignore; Food.com dataset audit into DECISIONS #8 | Merged |
 
 ## Session: 2026-10-07
 ### What we worked on and why
@@ -331,3 +333,53 @@ flowchart LR
 - Put new `.tf` files next to `providers.tf` (`infra/apis.tf`), never under `.terraform/` (local cache, gitignored).
 - Commit `.terraform.lock.hcl`; never commit `.terraform/` or `*.tfstate`.
 - We briefly had two weekly post filenames (`docs_workflow` and `week1_setup`); prefer one post per week and rename with `git mv` when the topic shifts.
+
+## Session: 2026-10-13 (PR #5 review fixes)
+### What we worked on and why
+Andrew requested changes on [PR #5](https://github.com/andrewtclim/meal-prep-app/pull/5). The WIF design was fine; two blocking items were missing docs and too-broad trust. We also merged latest `main` into `infra/gcp-foundations` so the branch included DECISIONS #20 (no Spoonacular) and the Food.com audit notes in #8.
+
+**Blocking fixes**
+1. **DECISIONS #22** — record keyless WIF instead of a JSON key in GitHub Secrets. Numbered #22 because #21 is reserved by the open conda PR.
+2. **Restrict WIF to `main`** — provider `attribute_condition` now requires both our repo and `refs/heads/main`, so feature-branch/PR workflows cannot impersonate `github-deploy`. Tradeoff: PR CI cannot use this provider until we add a separate path later.
+
+**Also done**
+- `depends_on = [google_project_service.services]` on `github_deploy` so first apply does not race the IAM API.
+- Resolved a merge conflict in `docs/CONCEPTS.md` by keeping Artifact Registry, WIF, *and* Data profiling (do not leave `<<<<<<<` markers in a commit).
+- Ran `terraform plan` from `infra/` (must `cd infra` or Terraform says “no configuration files”). Plan: **11 to add, 0 change, 0 destroy** — APIs, Artifact Registry `api`, WIF pool/provider, `github-deploy` SA, two IAM bindings; outputs for registry path, SA email, WIF provider. **Not applied** yet.
+- Pushed review commits and re-requested Andrew’s review.
+
+### Key code
+`infra/github_wif.tf`
+```hcl
+attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.ref == \"refs/heads/main\""
+```
+GitHub’s OIDC token carries `ref`. Requiring `refs/heads/main` scopes the temporary GCP badge to merges on main, not every branch in the repo.
+
+`docs/DECISIONS.md`
+```markdown
+### 22. Keyless CI auth to GCP (Workload Identity Federation)
+- **Status:** Proposed
+- **Decision:** ... WIF ... only accepts tokens from andrewtclim/meal-prep-app on refs/heads/main.
+```
+Design choices belong in DECISIONS even when the Terraform already exists; reviewers should not have to reverse-engineer “why not a JSON key?”
+
+### Diagram
+```mermaid
+flowchart LR
+  PR[PR_workflow] -->|ref_pull_merge| Blocked[Cannot_use_this_WIF]
+  Main[main_workflow] -->|ref_heads_main| Prov[WIF_provider]
+  Prov --> SA[github_deploy]
+  SA --> AR[Artifact_Registry_api]
+```
+
+### Decisions and concepts
+- [DECISIONS #22](../docs/DECISIONS.md): WIF over JSON keys; main-only provider (Proposed)
+- [DECISIONS #20](../docs/DECISIONS.md): Spoonacular dropped from core (on main; supersedes #5)
+- [CONCEPTS: Workload Identity Federation](../docs/CONCEPTS.md#workload-identity-federation)
+- [CONCEPTS: Data profiling](../docs/CONCEPTS.md#data-profiling)
+
+### What we'd explain differently next time
+- `git fetch` updates remote knowledge; `git merge origin/main` combines it into your branch — `pull` is fetch+merge in one step.
+- Merge conflicts: delete only the `<<<<<<<` / `=======` / `>>>>>>>` lines; keep both sides’ content when both belong (Accept Both).
+- Always resolve conflicts before committing; markers left in the file will ship in the PR.
+- Run Terraform commands from `infra/`, not the repo root.
