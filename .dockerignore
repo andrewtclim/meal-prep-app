@@ -13,3 +13,4 @@ infra/
 images/
 recipe_db_audit/
 CLAUDE*.md
+.venv/
