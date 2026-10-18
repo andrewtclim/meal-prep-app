@@ -7,7 +7,7 @@ Finished the Docker side of the hello endpoint by adding a `.dockerignore` to PR
 | PR | What it did | State |
 |---|---|---|
 | [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | `/health` endpoint, Dockerfile, test, `.dockerignore` | Merged |
-| uv migration (link once open) | `pyproject.toml` and `uv.lock`, Dockerfile installs with uv, closes #7 | Open |
+| [#12](https://github.com/andrewtclim/meal-prep-app/pull/12) | `pyproject.toml` and `uv.lock`, Dockerfile installs with uv, closes #7 | Open |
 | [#11](https://github.com/andrewtclim/meal-prep-app/pull/11) | Author name in weekly post filenames | Merged |
 
 ## Session: 2026-10-15
