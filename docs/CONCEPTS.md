@@ -54,9 +54,21 @@
 - **Why this over the alternative:** Starting a real server and calling it with `curl` is slower and needs a free port. The tradeoff is that it proves the code works, not that the container is wired correctly (port mapping, host binding).
 
 ### Dependency pinning
-- **What it is:** Writing exact versions (`fastapi==0.143.0`) so every build installs the same libraries. Dev-only libraries (pytest, httpx) live in `requirements-dev.txt`, which includes the production file with `-r`.
-- **Where we use it:** `requirements.txt` (installed in the image) and `requirements-dev.txt` (local and CI).
-- **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Pins don't update themselves, so upgrades are a deliberate edit. PR #7 (the shared conda env) proposes moving to version ranges, as its own DECISIONS entry.
+- **What it is:** Fixing which version of a library gets installed so every build is the same. An exact pin (`fastapi==0.143.0`) fixes only the packages we name, not their sub-dependencies. A lockfile fixes all of them (see Lockfile below).
+- **Where we use it:** `pyproject.toml` holds ranges (`fastapi>=0.143,<1`) and `uv.lock` holds the exact versions.
+- **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Exact pins in a requirements file were our first version, but they left sub-dependencies free to move.
+
+### uv
+- **What it is:** One tool that replaces conda (installing Python), pip (installing packages), and venv (making environments), and adds a lockfile. `uv sync` builds `.venv` from the lock, `uv add` adds a package, and `uv run` runs a command in the project environment with no activate step.
+- **Where we use it:** `pyproject.toml`, `uv.lock`, and `.venv/` at the repo root, and the `Dockerfile`, which copies the `uv` program in and runs `uv sync --frozen --no-dev`.
+- **Why this over the alternative:** Conda plus a pip requirements file needs two files kept in sync and has no lockfile. uv keeps the spec in one file and makes the lock automatic. The tradeoff is that uv is newer, so there are fewer tutorials.
+- **Common question:** What is the difference between `pyproject.toml` and `uv.lock`? The first says what we want, the second records exactly what we got, and we commit both.
+
+### Lockfile
+- **What it is:** A generated file that records the exact version of every installed package, sub-dependencies included, plus a hash of each download. An install that doesn't match the hash fails, which guards against a tampered package (a supply-chain attack).
+- **Where we use it:** `uv.lock`. It is written by uv and never edited by hand. Docker uses it through `uv sync --frozen`, which fails if the lock and `pyproject.toml` disagree instead of re-resolving.
+- **Why this over the alternative:** A requirements file with ranges can resolve to different versions on different days. A lockfile makes the laptop, CI, and Docker install the same set. Upgrades become a deliberate step (`uv lock --upgrade-package <name>`).
+- **Common question:** Why commit a lockfile? So every environment is rebuilt from the same versions, and a version change shows up as a reviewable diff.
 
 ### Docker build context and .dockerignore
 - **What it is:** The build context is the folder Docker can `COPY` from when you run `docker build .`. `.dockerignore` lists paths that are never visible to the build, the same way `.gitignore` works for git. It keeps secrets (`.env`), the git history, and large local folders out of the image and out of cache checks.

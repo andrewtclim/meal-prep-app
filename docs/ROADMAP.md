@@ -19,7 +19,7 @@
 | Create repo with `docs/` and `CLAUDE.md`, connect Claude Project | must | | |
 | Decide cloud provider (DECISIONS #10) | must | | done |
 | GitHub Actions: lint + pytest on every PR | must | | |
-| Dockerized FastAPI hello endpoint | must | Andrew | done in PR #10 (open): app, Dockerfile, test, and `.dockerignore`; in review |
+| Dockerized FastAPI hello endpoint | must | Andrew | done (PR #10 merged): app, Dockerfile, test, and `.dockerignore` |
 | CD: merge to main auto-deploys the endpoint | must | | |
 | Create Supabase and Neo4j free tier projects (dev only) | must | | |
 | Set billing alerts, check free tier limits for Supabase and Neo4j | must | | |
@@ -68,3 +68,4 @@ _One line per change: date, what changed, why. Link a DECISIONS entry if one was
 - 2026-10-02: Prep task extraction added to week 3 (DECISIONS #6).
 - 2026-10-02: ELT with dbt added to week 2, FDA recalls pipeline added to week 4 (DECISIONS #14 to #16).
 - 2026-10-07: Chose GCP as cloud provider (DECISIONS #10); Terraform scaffold landed under `infra/`.
+- 2026-10-17: Switched Python dependencies from the proposed conda env (PR #7) and pinned requirements to uv with a lockfile (DECISIONS #22).
