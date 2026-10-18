@@ -60,13 +60,13 @@
 
 ### uv
 - **What it is:** One tool that replaces conda (installing Python), pip (installing packages), and venv (making environments), and adds a lockfile. `uv sync` builds `.venv` from the lock, `uv add` adds a package, and `uv run` runs a command in the project environment with no activate step.
-- **Where we use it:** `pyproject.toml`, `uv.lock`, and `.venv/` at the repo root, and the `Dockerfile`, which copies the `uv` program in and runs `uv sync --frozen --no-dev`.
+- **Where we use it:** `pyproject.toml`, `uv.lock`, and `.venv/` at the repo root, and the `Dockerfile`, which copies the `uv` program in and runs `uv sync --locked --no-dev`.
 - **Why this over the alternative:** Conda plus a pip requirements file needs two files kept in sync and has no lockfile. uv keeps the spec in one file and makes the lock automatic. The tradeoff is that uv is newer, so there are fewer tutorials.
 - **Common question:** What is the difference between `pyproject.toml` and `uv.lock`? The first says what we want, the second records exactly what we got, and we commit both.
 
 ### Lockfile
 - **What it is:** A generated file that records the exact version of every installed package, sub-dependencies included, plus a hash of each download. An install that doesn't match the hash fails, which guards against a tampered package (a supply-chain attack).
-- **Where we use it:** `uv.lock`. It is written by uv and never edited by hand. Docker uses it through `uv sync --frozen`, which fails if the lock and `pyproject.toml` disagree instead of re-resolving.
+- **Where we use it:** `uv.lock`. It is written by uv and never edited by hand. Docker uses it through `uv sync --locked`, which fails the build if the lock and `pyproject.toml` disagree. (`--frozen` looks similar but skips that check and silently installs from a stale lock.)
 - **Why this over the alternative:** A requirements file with ranges can resolve to different versions on different days. A lockfile makes the laptop, CI, and Docker install the same set. Upgrades become a deliberate step (`uv lock --upgrade-package <name>`).
 - **Common question:** Why commit a lockfile? So every environment is rebuilt from the same versions, and a version change shows up as a reviewable diff.
 
