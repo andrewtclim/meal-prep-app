@@ -154,3 +154,10 @@
 - **Decision:** GitHub Actions authenticates to GCP with Workload Identity Federation and impersonates the `github-deploy` service account. We do not store a service-account JSON key in GitHub Secrets. The WIF provider only accepts tokens from `andrewtclim/meal-prep-app` on `refs/heads/main`.
 - **Why:** Long-lived keys are easy to leak and slow to rotate. WIF issues short-lived credentials scoped to our repo and branch. Restricting to `main` means feature-branch or PR workflows cannot push images; we can split push vs deploy accounts later if needed.
 - **Impact:** `infra/github_wif.tf` and `infra/outputs.tf`. A later CD workflow will use the WIF provider name and SA email from Terraform outputs. PR workflows cannot use this provider until we add a separate path.
+
+### 22. uv for Python dependencies and environments
+- **Date:** 2026-10-17
+- **Status:** Proposed
+- **Decision:** Dependencies live in `pyproject.toml` (ranges, with a `dev` group) and are locked in `uv.lock`. Local dev uses uv (`uv sync`, `uv add`, `uv run`) and the Docker image installs with `uv sync --locked --no-dev`. Replaces the conda env plus `requirements.txt` plan in PR #7 (its proposed #21 is not used), and replaces main's pinned `requirements.txt` and `requirements-dev.txt`.
+- **Why:** Conda plus pip left two copies of the package list to keep in sync and had no lockfile, so sub-dependencies could still change between builds. Main's exact pins covered only the packages we named. One `pyproject.toml` plus a lockfile gives the same versions on a laptop, in CI, and in Docker, with one spec to edit. uv is also much faster than pip.
+- **Impact:** `Dockerfile` copies uv in and installs from the lock. New dependencies go in with `uv add`, and `pyproject.toml` and `uv.lock` are committed together. PR #7 is closed. Packages for the rest of the stack are added as each piece is built, with their decisions.
