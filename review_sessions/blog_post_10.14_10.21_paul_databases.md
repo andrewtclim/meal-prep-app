@@ -9,6 +9,7 @@ Reviewed Andrew’s uv migration (PR #12) and aligned on where our databases liv
 | [#5](https://github.com/andrewtclim/meal-prep-app/pull/5) | GCP foundations (Artifact Registry, WIF) | Merged |
 | [#10](https://github.com/andrewtclim/meal-prep-app/pull/10) | FastAPI `/health` + Dockerfile | Merged |
 | [#12](https://github.com/andrewtclim/meal-prep-app/pull/12) | Replace conda/requirements with uv + lockfile (DECISIONS #22) | Merged |
+| [#13](https://github.com/andrewtclim/meal-prep-app/pull/13) | Alembic migrations for the ER diagram tables | Open |
 
 ## Session: 2026-10-18
 ### What we worked on and why
