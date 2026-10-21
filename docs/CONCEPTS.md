@@ -59,10 +59,10 @@
 - **Why this over the alternative:** Unpinned `fastapi` installs whatever is newest on build day, so a build next month can break with no code change. Exact pins in a requirements file were our first version, but they left sub-dependencies free to move.
 
 ### uv
-- **What it is:** One tool that replaces conda (installing Python), pip (installing packages), and venv (making environments), and adds a lockfile. `uv sync` builds `.venv` from the lock, `uv add` adds a package, and `uv run` runs a command in the project environment with no activate step.
+- **What it is:** One tool that replaces conda (installing Python), pip (installing packages), and venv (making environments), and adds a lockfile. `uv sync` builds `.venv` from the lock, `uv add` adds a package, and `uv run` runs a command in the project environment with no activate step. `uv add --dev` puts a package in the `dev` group in `pyproject.toml` (tools for working on the repo, such as pytest and Ruff) and updates `uv.lock` with that package and its dependencies. The Docker image runs `uv sync --locked --no-dev`, which installs only the main dependency list, so those dev tools are not in the image. CI omits `--no-dev` so the linter and tests are installed there.
 - **Where we use it:** `pyproject.toml`, `uv.lock`, and `.venv/` at the repo root, and the `Dockerfile`, which copies the `uv` program in and runs `uv sync --locked --no-dev`.
 - **Why this over the alternative:** Conda plus a pip requirements file needs two files kept in sync and has no lockfile. uv keeps the spec in one file and makes the lock automatic. The tradeoff is that uv is newer, so there are fewer tutorials.
-- **Common question:** What is the difference between `pyproject.toml` and `uv.lock`? The first says what we want, the second records exactly what we got, and we commit both.
+- **Common question:** What is the difference between `pyproject.toml` and `uv.lock`? The first says what we want, the second records exactly what we got, and we commit both. How does Docker know to skip dev tools? It does not read your mind: the Dockerfile passes `--no-dev` to `uv sync`.
 
 ### Lockfile
 - **What it is:** A generated file that records the exact version of every installed package, sub-dependencies included, plus a hash of each download. An install that doesn't match the hash fails, which guards against a tampered package (a supply-chain attack).
@@ -75,3 +75,9 @@
 - **Where we use it:** `.dockerignore` at the repo root. It hides docs, tests, infra, and local-only folders (e.g. a 1.1 GB audit folder) from the build.
 - **Why this over the alternative:** Without it, a future `COPY . .` would pull `.env` and the whole repo into the image. Today it changes nothing measurable: BuildKit (Docker's current builder) only uploads files a `COPY` actually asks for, and our context was ~800 bytes with and without the file. So this is insurance, not a speedup. We exclude `tests/`; remove that line if CI ever runs pytest inside the container.
 - **Common question:** What is the difference between `.gitignore` and `.dockerignore`? Different tools, separate files: git decides what is versioned, Docker decides what the build can see. They overlap but neither reads the other.
+
+### GitHub Actions CI
+- **What it is:** A YAML file GitHub reads to run commands on its own machines. `on` is when the run starts (here, every pull request and every push to `main`). A job is one machine (`ubuntu-latest`). Steps run in order on that machine: download the repo, install uv and Python 3.12, `uv sync --locked --dev`, then Ruff and pytest. The job fails if any step exits with an error. This workflow does not deploy and does not use GCP.
+- **Where we use it:** `.github/workflows/ci.yml`.
+- **Why this over the alternative:** Running lint and tests only on a laptop means a broken branch can still be merged. CI runs the same two commands on a clean machine for every PR. CD (build the image and deploy on merge to `main`) is a later workflow and needs Workload Identity Federation.
+- **Common question:** Why does CI pass `--dev` when Docker passes `--no-dev`? CI has to install Ruff and pytest. The running API image does not.
