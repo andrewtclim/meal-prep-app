@@ -31,7 +31,7 @@
 
 | Task | Tag | Owner | Status |
 |---|---|---|---|
-| First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | | |
+| First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | Paul | in progress on `feat/postgres-core-migrations`: six core tables plus the rest of the ER diagram (preferences, ratings, events). Not merged |
 | Create `raw` schema, load recipe dataset into it untouched | must | | |
 | Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | | |
 | `pipeline_runs` log table | should | | |
