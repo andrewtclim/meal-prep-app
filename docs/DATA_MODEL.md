@@ -17,9 +17,9 @@
 
 | Group | Entities | Notes |
 |---|---|---|
-| Users | users, preferences | Profile set once: cuisines, dietary needs, location |
-| Pantry | pantry_items | What the user has now, linked to `ingredient_id` |
-| Recipes | recipes, ingredients, recipe_ingredients, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` comes from LLM extraction at ingestion |
+| Users | users, cuisines, user_cuisine, allergens, user_allergen, user_events | Profile: name, city, budget, cuisine preferences, allergens. `user_events` is activity (views, saves) |
+| Pantry | user_pantry | What the user has now, linked to `ingredient_id` |
+| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion |
 | Embeddings | recipe embeddings, ingredient embeddings (pgvector) | Recipe embeddings power semantic search. Ingredient embeddings are the substitution model's output |
 | Plans | meal_plans, plan_items | A week's approved plan and what's cooked each day |
 | Conversations | conversations, messages | Our own transcript tables. `conversations.thread_id` matches the LangGraph thread |

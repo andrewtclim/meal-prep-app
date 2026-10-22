@@ -75,3 +75,15 @@
 - **Where we use it:** `.dockerignore` at the repo root. It hides docs, tests, infra, and local-only folders (e.g. a 1.1 GB audit folder) from the build.
 - **Why this over the alternative:** Without it, a future `COPY . .` would pull `.env` and the whole repo into the image. Today it changes nothing measurable: BuildKit (Docker's current builder) only uploads files a `COPY` actually asks for, and our context was ~800 bytes with and without the file. So this is insurance, not a speedup. We exclude `tests/`; remove that line if CI ever runs pytest inside the container.
 - **Common question:** What is the difference between `.gitignore` and `.dockerignore`? Different tools, separate files: git decides what is versioned, Docker decides what the build can see. They overlap but neither reads the other.
+
+### Database migration (Alembic)
+- **What it is:** A versioned script that changes the database shape (create a table, add a column). Alembic runs the scripts in order against Postgres and records which ones already ran in an `alembic_version` table, so the same change is not applied twice. `upgrade` applies the change; `downgrade` undoes it.
+- **Where we use it:** `alembic/`, `alembic.ini`, and `alembic/versions/`. `alembic/env.py` reads `DATABASE_URL` from `.env` so the password is not committed. `2beee51a1f35` creates `users`, `units`, `ingredients`, `recipes`, `recipe_ingredient`, and `user_pantry`. `fe3310413886` adds cuisines, allergens, the junction tables, ratings, and `user_events`. Once a revision has been applied, later changes are new files that point at it with `down_revision`.
+- **Why this over the alternative:** Clicking tables together in the Supabase UI is faster once, but Andrew's database would not match and the shape would not be in git. DECISIONS #2 says migration files are the schema source of truth. Plain `.sql` files work too; Alembic adds the "already applied" bookkeeping.
+- **Common question:** What is the difference between a migration and loading data? A migration builds the shelves. Inserts and dataset loads put rows on them.
+
+### Junction table
+- **What it is:** A table whose rows are pairs of ids from two other tables. It is how a relational database stores a many-to-many link: one user can prefer many cuisines, and one cuisine can be preferred by many users. The primary key is both ids together, so the same pair cannot be stored twice.
+- **Where we use it:** `user_cuisine`, `user_allergen`, `ingredient_allergen`, and `user_recipe` in `alembic/versions/fe3310413886_create_preference_and_event_tables.py`.
+- **Why this over the alternative:** A single `cuisine_id` column on `users` can store only one cuisine per person. A list stuffed into one text column is hard to query and easy to misspell.
+- **Common question:** Why not just add a column? A column holds one value. A junction table holds as many links as you need.
