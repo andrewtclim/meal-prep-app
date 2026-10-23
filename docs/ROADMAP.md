@@ -18,7 +18,7 @@
 |---|---|---|---|
 | Create repo with `docs/` and `CLAUDE.md`, connect Claude Project | must | | |
 | Decide cloud provider (DECISIONS #10) | must | | done |
-| GitHub Actions: lint + pytest on every PR | must | | |
+| GitHub Actions: lint + pytest on every PR | must | Paul | done (PR #14 merged): Ruff and pytest run on every PR and on pushes to `main` |
 | Dockerized FastAPI hello endpoint | must | Andrew | done (PR #10 merged): app, Dockerfile, test, and `.dockerignore` |
 | CD: merge to main auto-deploys the endpoint | must | | |
 | Create Supabase and Neo4j free tier projects (dev only) | must | | |
@@ -31,7 +31,7 @@
 
 | Task | Tag | Owner | Status |
 |---|---|---|---|
-| First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | Paul | in progress on `feat/postgres-core-migrations`: six core tables plus the rest of the ER diagram (preferences, ratings, events). Not merged |
+| First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | Paul | done (PR #13 merged): Alembic migrations for the 14 ER diagram tables (six core tables plus preferences, ratings, events) |
 | Create `raw` schema, load recipe dataset into it untouched | must | | |
 | Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | | |
 | `pipeline_runs` log table | should | | |
