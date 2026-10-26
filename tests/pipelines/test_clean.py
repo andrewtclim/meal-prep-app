@@ -5,8 +5,11 @@ from pipelines.foodcom.clean import (
     add_minutes_columns,
     add_quantities_aligned,
     add_recipe_key,
+    apply_funnel,
     dedupe_by_name,
     drop_junk_rows,
+    estimate_row_bytes,
+    finalize_types,
     has_content,
     make_arrays_plain,
     normalize_name,
@@ -31,9 +34,14 @@ def test_to_str_list_handles_numpy_list_and_missing():
     assert to_str_list(float("nan")) == []
 
 
-def test_to_str_list_unescapes_trims_and_keeps_blanks():
-    # Blanks stay: dropping one would shift every later item out of position.
-    assert to_str_list(["  Mac &amp; Cheese ", "", None]) == ["Mac & Cheese", "", ""]
+def test_to_str_list_unescapes_and_trims():
+    assert to_str_list(["  Mac &amp; Cheese ", "x"]) == ["Mac & Cheese", "x"]
+
+
+def test_to_str_list_blanks_dropped_by_default_kept_when_positional():
+    # Positional lists keep blanks: dropping one would shift every later item.
+    assert to_str_list(["a", "", None]) == ["a"]
+    assert to_str_list(["a", "", None], keep_blanks=True) == ["a", "", ""]
 
 
 def test_trim_and_rename_and_arrays():
@@ -144,3 +152,37 @@ def test_add_recipe_key_is_sequential_by_source_ref():
     out = add_recipe_key(pd.DataFrame({"source_ref": [30, 10, 20]}))
     assert out["source_ref"].tolist() == [10, 20, 30]
     assert out["recipe_key"].tolist() == [1, 2, 3]
+
+
+def test_finalize_types_gives_nullable_integers():
+    out = finalize_types(pd.DataFrame({"review_count": [4.0, None], "recipe_servings": [2.0, 6.0]}))
+    assert str(out["review_count"].dtype) == "Int64" and pd.isna(out["review_count"][1])
+    assert out["recipe_servings"].tolist() == [2, 6]
+
+
+def _funnel_frame():
+    return pd.DataFrame({
+        "total_minutes": pd.array([30, 120, None, 45], dtype="Int64"),
+        "ingredient_parts": [["a"] * 5, ["a"] * 5, ["a"] * 5, ["a"] * 2],
+        "recipe_category": ["Chicken", "Chicken", "Chicken", "Chicken"],
+        "aggregated_rating": [4.0, 4.0, 4.0, 4.0],
+    })
+
+
+def test_apply_funnel_is_cumulative_and_treats_missing_time_as_excluded():
+    # Row 1 fails on time, row 2 has a missing time, row 3 fails on ingredient count.
+    out, table = apply_funnel(_funnel_frame().assign(
+        description="d", name="n", recipe_yield="y", images=[[]] * 4, keywords=[[]] * 4,
+        quantities_raw=[[]] * 4, instructions=[[]] * 4))
+    assert [rows for _, rows, _ in table] == [4, 3 - 1, 1, 1, 1]
+    assert out.index.tolist() == [0]
+
+
+def test_estimate_row_bytes_grows_with_text():
+    base = {
+        "name": "a", "description": "", "recipe_category": "", "recipe_yield": "",
+        "images": [], "keywords": [], "ingredient_parts": [], "quantities_raw": [], "instructions": [],
+    }
+    small = pd.DataFrame([base])
+    big = pd.DataFrame([{**base, "instructions": ["x" * 1000]}])
+    assert estimate_row_bytes(big)[0] - estimate_row_bytes(small)[0] >= 1000

@@ -5,10 +5,14 @@ data/interim/recipes_clean.parquet, one row per recipe. We build this file one
 block at a time and check the data after each block, so a bug shows up where
 it was introduced rather than three steps later.
 
-Run:  uv run python -m pipelines.foodcom.clean
+Run:  uv run python -m pipelines.foodcom.clean            (full clean set + report)
+      uv run python -m pipelines.foodcom.clean --subset   (also write the chosen subset)
 """
 
+import argparse
 import html
+import json
+import math
 import re
 from pathlib import Path
 
@@ -29,6 +33,9 @@ ARRAY_COLUMNS = [
     "RecipeIngredientQuantities",
     "RecipeInstructions",
 ]
+
+# Lists whose items are matched to each other by position (see to_str_list).
+POSITIONAL_COLUMNS = {"RecipeIngredientParts", "RecipeIngredientQuantities"}
 
 # Applied after the mechanical snake_case conversion. We choose these names
 # now so later stages (and the Postgres tables) don't have to rename again.
@@ -55,6 +62,25 @@ SUSPECT_TOTAL_MINUTES = 24 * 60
 # come back as missing rather than as a wrong number.
 DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
+# --- Size funnel: candidate filters for the subset that goes to the LLM and the
+# database. Named constants so the choice is visible and editable in one place.
+SUBSET_PATH = Path("data/interim/recipes_subset.parquet")
+MAX_TOTAL_MINUTES = 90  # weeknight-friendly
+MIN_INGREDIENTS = 3  # fewer is usually a drink or a one-liner
+MAX_INGREDIENTS = 20  # more is a project, not a weeknight dinner
+# Food.com's 300+ categories mix dish types, single ingredients ("Potato"),
+# time buckets ("< 30 Mins") and diets. This is a first-pass list of dinner-style
+# categories read off the most common values; edit it as we learn more.
+MAIN_DISH_CATEGORIES = {
+    "One Dish Meal", "Pork", "Chicken", "Meat", "Chicken Breast", "Stew", "Poultry",
+    "Steak", "Curries", "Lamb/Sheep", "Chowders", "Spaghetti", "Chicken Thigh & Leg",
+    "Ham", "Roast Beef", "Whole Chicken", "Tuna", "Clear Soup", "Penne", "Savory Pies",
+    "Crab",
+}  # fmt: skip
+
+# Supabase free tier. The estimate below is for data only; see estimate_row_bytes.
+DB_LIMIT_MB = 500
+
 
 def to_snake_case(name: str) -> str:
     """Convert a CamelCase column name to snake_case ("CookTime" -> "cook_time").
@@ -65,7 +91,7 @@ def to_snake_case(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
 
 
-def to_str_list(value) -> list[str]:
+def to_str_list(value, keep_blanks: bool = False) -> list[str]:
     """Turn a parquet list cell into a plain Python list of cleaned strings.
 
     Input: a numpy array, a list, or a missing value (None or NaN).
@@ -73,14 +99,18 @@ def to_str_list(value) -> list[str]:
     a missing value becomes an empty list.
 
     Why: numpy arrays behave differently from lists (truth tests, JSON, equality),
-    so we convert once, here. We do NOT drop blank elements: ingredient parts and
-    quantities are matched by position, and removing a blank would shift every
-    later item and break that matching.
+    so we convert once, here.
+
+    keep_blanks: positional lists (ingredient parts and quantities) must keep
+    blank elements, because items are matched by position and removing a blank
+    would shift every later item. For all other lists, blanks are junk and are
+    dropped.
     """
     # Strings are iterable too, so rule them out; None and NaN are not iterable.
     if isinstance(value, str) or not hasattr(value, "__iter__"):
         return []
-    return ["" if item is None else html.unescape(str(item)).strip() for item in value]
+    cleaned = ["" if item is None else html.unescape(str(item)).strip() for item in value]
+    return cleaned if keep_blanks else [item for item in cleaned if item]
 
 
 def load_raw(path: Path = RAW_PATH) -> pd.DataFrame:
@@ -106,7 +136,8 @@ def make_arrays_plain(df: pd.DataFrame) -> pd.DataFrame:
     Runs on the original CamelCase names, so call it before trim_and_rename.
     """
     for col in ARRAY_COLUMNS:
-        df[col] = df[col].map(to_str_list)
+        keep = col in POSITIONAL_COLUMNS
+        df[col] = df[col].map(lambda v, keep=keep: to_str_list(v, keep_blanks=keep))
     return df
 
 
@@ -270,37 +301,135 @@ def add_recipe_key(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def main() -> None:
-    """Run the blocks written so far and print a quick look at the result."""
-    df = load_raw()
-    print(f"loaded: {len(df):,} rows, {df.shape[1]} columns")
+def finalize_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Turn the two count columns back into nullable integers.
 
+    pandas reads review_count and recipe_servings as floats because some values
+    are missing. Int64 keeps them as whole numbers with real nulls, which maps
+    cleanly onto Postgres integer columns in stage 3.
+    """
+    for col in ["review_count", "recipe_servings"]:
+        df[col] = df[col].astype("Int64")
+    return df
+
+
+def estimate_row_bytes(df: pd.DataFrame) -> pd.Series:
+    """Roughly estimate each recipe's size in Postgres, in bytes.
+
+    Counts UTF-8 bytes of every text value (plus ~4 bytes of header per text or
+    array element), 8 bytes per numeric column, and a 24-byte row header.
+    It ignores indexes and TOAST compression of long text, so treat it as a
+    rough upper bound on the table data. The real number comes from measuring a
+    1,000-recipe sample in stage 3.
+    """
+    text_cols = ["name", "description", "recipe_category", "recipe_yield"]
+    list_cols = ["images", "keywords", "ingredient_parts", "quantities_raw", "instructions"]
+    total = pd.Series(24, index=df.index, dtype="int64")
+    for col in text_cols:
+        total += df[col].map(lambda v: len(v.encode()) + 4 if isinstance(v, str) else 0)
+    for col in list_cols:
+        total += df[col].map(lambda items: 24 + sum(len(x.encode()) + 4 for x in items))
+    numeric = df.select_dtypes("number").shape[1]
+    return total + 8 * numeric
+
+
+def funnel_steps() -> list[tuple[str, callable]]:
+    """The candidate subset filters, in order, as (label, mask function) pairs."""
+    return [
+        (f"total <= {MAX_TOTAL_MINUTES} min", lambda d: (d["total_minutes"] <= MAX_TOTAL_MINUTES).fillna(False)),
+        (
+            f"{MIN_INGREDIENTS}-{MAX_INGREDIENTS} ingredients",
+            lambda d: d["ingredient_parts"].map(len).between(MIN_INGREDIENTS, MAX_INGREDIENTS),
+        ),
+        ("main-dish category", lambda d: d["recipe_category"].isin(MAIN_DISH_CATEGORIES)),
+        ("has a rating", lambda d: d["aggregated_rating"].notna()),
+    ]
+
+
+def apply_funnel(df: pd.DataFrame) -> tuple[pd.DataFrame, list[tuple[str, int, float]]]:
+    """Apply each filter in turn and record (label, rows left, estimated MB).
+
+    Output: the fully filtered frame (the candidate subset) and the table that
+    shows how much each filter cut. Each row is cumulative: it includes every
+    filter above it.
+    """
+    row_bytes = estimate_row_bytes(df)
+    table = [("all clean rows", len(df), row_bytes.sum() / 1e6)]
+    for label, make_mask in funnel_steps():
+        df = df[make_mask(df)]
+        table.append((label, len(df), row_bytes[df.index].sum() / 1e6))
+    return df, table
+
+
+def jsonable(value):
+    """Make one cell printable as JSON: shorten lists, turn missing into null."""
+    if isinstance(value, list):
+        return value[:3] + (["..."] if len(value) > 3 else [])
+    if value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value)):
+        return None
+    return value.item() if hasattr(value, "item") else value
+
+
+def print_validation_report(df: pd.DataFrame, rows_in: int) -> None:
+    """Print the checks we read before trusting this stage's output."""
+    print(f"\n=== validation report: {rows_in:,} rows in, {len(df):,} out ===")
+
+    nulls = (df.isna().mean() * 100).round(1)
+    print("\nnull % (columns with any missing values):\n" + nulls[nulls > 0].to_string())
+
+    print("\ntotal_minutes distribution:")
+    print(df["total_minutes"].astype("float").describe(percentiles=[0.1, 0.5, 0.9, 0.99]).round(1).to_string())
+
+    print(f"\nquantities_aligned: {df['quantities_aligned'].mean():.1%}")
+
+    lengths = pd.DataFrame({c: df[c].map(len) for c in ["ingredient_parts", "instructions", "keywords", "images"]})
+    print("\narray lengths:\n" + lengths.describe().loc[["min", "50%", "max", "mean"]].round(1).to_string())
+
+    print("\n5 random cleaned rows (lists shortened to 3 items):")
+    for _, row in df.sample(5, random_state=42).iterrows():
+        print(json.dumps({k: jsonable(v) for k, v in row.items()}, ensure_ascii=False)[:900])
+
+
+def main() -> None:
+    """Run every block, print the funnel and report, and write the output files."""
+    parser = argparse.ArgumentParser(description="Clean the Food.com recipes parquet.")
+    parser.add_argument("--subset", action="store_true", help=f"also write {SUBSET_PATH} using the funnel filters")
+    args = parser.parse_args()
+
+    df = load_raw()
+    rows_in = len(df)
     df = make_arrays_plain(df)
     df = trim_and_rename(df)
-    print(f"after block 1: {len(df):,} rows, {df.shape[1]} columns")
-
     df = add_minutes_columns(df)
-    print(f"after block 2: {len(df):,} rows, {df.shape[1]} columns\n")
-    minutes = ["cook_minutes", "prep_minutes", "total_minutes"]
-    print("missing values:\n" + df[minutes].isna().sum().to_string())
-    print("\nminutes summary:\n" + df[minutes].describe(percentiles=[0.5, 0.9, 0.99]).round(1).to_string())
-    print(f"\ntime_suspect (total > 24h): {int(df['time_suspect'].sum()):,} rows")
-    print("\nsample:\n" + df[["name", *minutes, "time_suspect"]].head(5).to_string())
-
     df, removed = drop_junk_rows(df)
-    df = add_quantities_aligned(df)
-    print(f"\nafter block 3: {len(df):,} rows, {df.shape[1]} columns")
     for rule, count in removed.items():
-        print(f"  removed {count:,} rows: {rule}")
-    print(f"  quantities_aligned: {df['quantities_aligned'].mean():.1%} of kept rows")
-
-    before = len(df)
+        print(f"removed {count:,} rows: {rule}")
+    df = add_quantities_aligned(df)
+    before_dedupe = len(df)
     df, top = dedupe_by_name(df)
     df = add_recipe_key(df)
-    print(f"\nafter block 4: {len(df):,} rows (removed {before - len(df):,} duplicates by name)")
+    df = finalize_types(df)
+    print(f"removed {before_dedupe - len(df):,} duplicate names; {len(df):,} recipes left")
     print("10 largest duplicate groups:")
     for row in top.itertuples():
         print(f"  {row.size:>5}  {row.name_key!r}  e.g. {row.example_names}")
+
+    subset, table = apply_funnel(df)
+    print("\n=== size funnel (cumulative; est. MB is one copy of the data, no indexes) ===")
+    print(f"{'filter':<26}{'rows':>10}{'est MB':>10}")
+    for label, rows, mb in table:
+        print(f"{label:<26}{rows:>10,}{mb:>10,.0f}")
+    print(f"Supabase free tier limit: {DB_LIMIT_MB} MB for everything (tables, indexes, embeddings)")
+
+    print_validation_report(df, rows_in)
+
+    CLEAN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(CLEAN_PATH, index=False)
+    print(f"\nwrote {CLEAN_PATH} ({len(df):,} rows)")
+    if args.subset:
+        subset.reset_index(drop=True).to_parquet(SUBSET_PATH, index=False)
+        print(f"wrote {SUBSET_PATH} ({len(subset):,} rows)")
+
 
 if __name__ == "__main__":
     main()
