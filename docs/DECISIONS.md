@@ -157,7 +157,7 @@
 
 ### 22. uv for Python dependencies and environments
 - **Date:** 2026-10-17
-- **Status:** Proposed
+- **Status:** Accepted
 - **Decision:** Dependencies live in `pyproject.toml` (ranges, with a `dev` group) and are locked in `uv.lock`. Local dev uses uv (`uv sync`, `uv add`, `uv run`) and the Docker image installs with `uv sync --locked --no-dev`. Replaces the conda env plus `requirements.txt` plan in PR #7 (its proposed #21 is not used), and replaces main's pinned `requirements.txt` and `requirements-dev.txt`.
 - **Why:** Conda plus pip left two copies of the package list to keep in sync and had no lockfile, so sub-dependencies could still change between builds. Main's exact pins covered only the packages we named. One `pyproject.toml` plus a lockfile gives the same versions on a laptop, in CI, and in Docker, with one spec to edit. uv is also much faster than pip.
 - **Impact:** `Dockerfile` copies uv in and installs from the lock. New dependencies go in with `uv add`, and `pyproject.toml` and `uv.lock` are committed together. PR #7 is closed. Packages for the rest of the stack are added as each piece is built, with their decisions.
