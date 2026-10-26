@@ -10,6 +10,7 @@ from pipelines.foodcom.clean import (
     drop_junk_rows,
     estimate_row_bytes,
     finalize_types,
+    funnel_steps,
     has_content,
     make_arrays_plain,
     normalize_name,
@@ -186,3 +187,9 @@ def test_estimate_row_bytes_grows_with_text():
     small = pd.DataFrame([base])
     big = pd.DataFrame([{**base, "instructions": ["x" * 1000]}])
     assert estimate_row_bytes(big)[0] - estimate_row_bytes(small)[0] >= 1000
+
+
+def test_category_filter_excludes_desserts_but_keeps_unknown_and_vegetarian():
+    mask_fn = dict(funnel_steps())["not an excluded category"]
+    cats = pd.DataFrame({"recipe_category": ["Dessert", "Vegetable", None, "One Dish Meal", "Beverages"]})
+    assert mask_fn(cats).tolist() == [False, True, True, True, False]

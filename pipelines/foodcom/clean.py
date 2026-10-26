@@ -69,13 +69,25 @@ MAX_TOTAL_MINUTES = 90  # weeknight-friendly
 MIN_INGREDIENTS = 3  # fewer is usually a drink or a one-liner
 MAX_INGREDIENTS = 20  # more is a project, not a weeknight dinner
 # Food.com's 300+ categories mix dish types, single ingredients ("Potato"),
-# time buckets ("< 30 Mins") and diets. This is a first-pass list of dinner-style
-# categories read off the most common values; edit it as we learn more.
-MAIN_DISH_CATEGORIES = {
-    "One Dish Meal", "Pork", "Chicken", "Meat", "Chicken Breast", "Stew", "Poultry",
-    "Steak", "Curries", "Lamb/Sheep", "Chowders", "Spaghetti", "Chicken Thigh & Leg",
-    "Ham", "Roast Beef", "Whole Chicken", "Tuna", "Clear Soup", "Penne", "Savory Pies",
-    "Crab",
+# cuisines, time buckets ("< 30 Mins") and diets, and a recipe has only one, so
+# an include list of "dinner" categories would miss vegetarian and cuisine-filed
+# dinners. Instead we exclude the clearly-not-dinner groups and keep everything
+# else, including ambiguous ones (Lunch/Snacks, Vegetable, single fruits).
+# Recipes with no category are kept too.
+EXCLUDED_CATEGORIES = {
+    # sweets and baking
+    "Dessert", "Cheesecake", "Frozen Desserts", "Ice Cream", "Pie", "Tarts", "Scones",
+    "Bar Cookie", "Drop Cookies", "Chocolate Chip Cookies", "Candy", "Gelatin", "Jellies",
+    "Sweet", "Desserts Fruit", "Breads", "Quick Breads", "Yeast Breads", "Sourdough Breads",
+    "Bread Machine",
+    # drinks
+    "Beverages", "Punch Beverage", "Smoothies", "Shakes",
+    # breakfast
+    "Breakfast", "Brunch", "Breakfast Eggs", "Oatmeal",
+    # condiments and bases
+    "Sauces", "Salad Dressings", "Spreads", "Chutneys", "Stocks",
+    # not food
+    "Bath/Beauty", "Household Cleaner", "Homeopathy/Remedies",
 }  # fmt: skip
 
 # Supabase free tier. The estimate below is for data only; see estimate_row_bytes.
@@ -341,7 +353,7 @@ def funnel_steps() -> list[tuple[str, callable]]:
             f"{MIN_INGREDIENTS}-{MAX_INGREDIENTS} ingredients",
             lambda d: d["ingredient_parts"].map(len).between(MIN_INGREDIENTS, MAX_INGREDIENTS),
         ),
-        ("main-dish category", lambda d: d["recipe_category"].isin(MAIN_DISH_CATEGORIES)),
+        ("not an excluded category", lambda d: ~d["recipe_category"].isin(EXCLUDED_CATEGORIES)),
         ("has a rating", lambda d: d["aggregated_rating"].notna()),
     ]
 
