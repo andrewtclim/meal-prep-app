@@ -22,3 +22,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Pipeline data (never committed; re-downloadable from Kaggle)
+data/
