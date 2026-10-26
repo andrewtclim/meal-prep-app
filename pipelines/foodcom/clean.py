@@ -90,6 +90,10 @@ EXCLUDED_CATEGORIES = {
     "Bath/Beauty", "Household Cleaner", "Homeopathy/Remedies",
 }  # fmt: skip
 
+# Half of all recipes have no rating (nobody reviewed them, not "they are bad").
+# Off by default so the subset keeps them; set True to require a rating.
+REQUIRE_RATING = False
+
 # Supabase free tier. The estimate below is for data only; see estimate_row_bytes.
 DB_LIMIT_MB = 500
 
@@ -346,16 +350,18 @@ def estimate_row_bytes(df: pd.DataFrame) -> pd.Series:
 
 
 def funnel_steps() -> list[tuple[str, callable]]:
-    """The candidate subset filters, in order, as (label, mask function) pairs."""
-    return [
+    """The subset filters, in order, as (label, mask function) pairs."""
+    steps = [
         (f"total <= {MAX_TOTAL_MINUTES} min", lambda d: (d["total_minutes"] <= MAX_TOTAL_MINUTES).fillna(False)),
         (
             f"{MIN_INGREDIENTS}-{MAX_INGREDIENTS} ingredients",
             lambda d: d["ingredient_parts"].map(len).between(MIN_INGREDIENTS, MAX_INGREDIENTS),
         ),
         ("not an excluded category", lambda d: ~d["recipe_category"].isin(EXCLUDED_CATEGORIES)),
-        ("has a rating", lambda d: d["aggregated_rating"].notna()),
     ]
+    if REQUIRE_RATING:
+        steps.append(("has a rating", lambda d: d["aggregated_rating"].notna()))
+    return steps
 
 
 def apply_funnel(df: pd.DataFrame) -> tuple[pd.DataFrame, list[tuple[str, int, float]]]:

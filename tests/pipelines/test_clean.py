@@ -175,7 +175,7 @@ def test_apply_funnel_is_cumulative_and_treats_missing_time_as_excluded():
     out, table = apply_funnel(_funnel_frame().assign(
         description="d", name="n", recipe_yield="y", images=[[]] * 4, keywords=[[]] * 4,
         quantities_raw=[[]] * 4, instructions=[[]] * 4))
-    assert [rows for _, rows, _ in table] == [4, 3 - 1, 1, 1, 1]
+    assert [rows for _, rows, _ in table] == [4, 2, 1, 1]  # rating step is off by default
     assert out.index.tolist() == [0]
 
 
