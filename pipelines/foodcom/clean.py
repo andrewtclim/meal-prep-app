@@ -188,6 +188,88 @@ def add_quantities_aligned(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def singularize(word: str) -> str:
+    """Strip a plural ending with a few simple rules ("cookies" -> "cooky").
+
+    The result is only ever used as a grouping key, never shown or stored, so
+    it does not need to be real English, just the same for "X" and "Xs". The
+    rules are deliberately small; a library like inflect would handle more
+    cases but is another dependency for a key we only use once.
+    """
+    # "ies" and "ie" both map to "y", so cookie/cookies and berry/berries
+    # each land on one key (a plain "ies" -> "y" rule would split pie/pies).
+    if len(word) > 3 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 2 and word.endswith("ie"):
+        return word[:-2] + "y"
+    if len(word) <= 3:
+        return word
+    if word.endswith(("oes", "ses", "xes", "zes", "ches", "shes")):
+        return word[:-2]
+    # Keep words that end in s but are not plurals: glass, hummus, couscous, lens.
+    if word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def normalize_name(name: str, source_ref: int) -> str:
+    """Build the duplicate-detection key for a recipe name.
+
+    Lowercase, drop apostrophes, turn other punctuation into spaces, collapse
+    whitespace, and singularize the last word, so "Lemonade", "lemonade!" and
+    "Lemonades" share a key. A name with no letters or digits at all gets a
+    unique key from its id, so empty names are never merged into one giant
+    "duplicate" group.
+    """
+    text = re.sub(r"[\'\u2019]", "", name.lower())
+    words = re.sub(r"[^\w\s]|_", " ", text).split()
+    if not words:
+        return f"__no_name_{source_ref}"
+    words[-1] = singularize(words[-1])
+    return " ".join(words)
+
+
+def dedupe_by_name(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep one recipe per normalized name: the best rated, ties broken fixed.
+
+    Output: the deduped frame, and a table of the 10 largest duplicate groups
+    (key, size, example names) for a human sanity check.
+
+    Order of preference: highest rating, then most reviews, then lowest
+    source_ref. The last rule makes the result identical on every rerun.
+    Missing ratings sort last, so an unrated copy never beats a rated one.
+    Tradeoff: different recipes can share a name ("Banana Bread"); we accept
+    that loss to keep the table small and the names unambiguous.
+    """
+    df = df.assign(name_key=[normalize_name(n, r) for n, r in zip(df["name"], df["source_ref"])])
+
+    sizes = df["name_key"].value_counts()
+    top = sizes.head(10).rename("size").reset_index()
+    top["example_names"] = [
+        list(dict.fromkeys(df.loc[df["name_key"] == key, "name"]))[:3] for key in top["name_key"]
+    ]
+
+    ranked = df.sort_values(
+        ["aggregated_rating", "review_count", "source_ref"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+    deduped = ranked.drop_duplicates(subset="name_key", keep="first").drop(columns="name_key")
+    return deduped.sort_values("source_ref").reset_index(drop=True), top
+
+
+def add_recipe_key(df: pd.DataFrame) -> pd.DataFrame:
+    """Add recipe_key: a sequential id 1..N, ordered by source_ref.
+
+    Why a second id: source_ref is Food.com's (stable, but gappy). recipe_key
+    is ours, for tracking rows through the pipeline. Postgres assigns the real
+    recipe_id in stage 3. Call after dedupe so the numbers have no holes.
+    """
+    df = df.sort_values("source_ref").reset_index(drop=True)
+    df.insert(0, "recipe_key", range(1, len(df) + 1))
+    return df
+
+
 def main() -> None:
     """Run the blocks written so far and print a quick look at the result."""
     df = load_raw()
@@ -211,6 +293,14 @@ def main() -> None:
     for rule, count in removed.items():
         print(f"  removed {count:,} rows: {rule}")
     print(f"  quantities_aligned: {df['quantities_aligned'].mean():.1%} of kept rows")
+
+    before = len(df)
+    df, top = dedupe_by_name(df)
+    df = add_recipe_key(df)
+    print(f"\nafter block 4: {len(df):,} rows (removed {before - len(df):,} duplicates by name)")
+    print("10 largest duplicate groups:")
+    for row in top.itertuples():
+        print(f"  {row.size:>5}  {row.name_key!r}  e.g. {row.example_names}")
 
 if __name__ == "__main__":
     main()

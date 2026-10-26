@@ -4,10 +4,14 @@ import pandas as pd
 from pipelines.foodcom.clean import (
     add_minutes_columns,
     add_quantities_aligned,
+    add_recipe_key,
+    dedupe_by_name,
     drop_junk_rows,
     has_content,
     make_arrays_plain,
+    normalize_name,
     parse_duration_minutes,
+    singularize,
     to_snake_case,
     to_str_list,
     trim_and_rename,
@@ -99,3 +103,44 @@ def test_add_quantities_aligned():
         "quantities_raw": [["1", "2"], ["1", "2", "3"]],
     })
     assert add_quantities_aligned(df)["quantities_aligned"].tolist() == [True, False]
+
+
+def test_singularize():
+    assert singularize("lemonades") == "lemonade"
+    assert singularize("cookies") == "cooky"
+    assert singularize("potatoes") == "potato"
+    assert singularize("sandwiches") == "sandwich"
+    # Not plurals: must be left alone.
+    assert singularize("hummus") == "hummus" and singularize("glass") == "glass"
+    # Singular and plural must meet on one key, whatever the key looks like.
+    for single, plural in [("pie", "pies"), ("cookie", "cookies"), ("berry", "berries"), ("cake", "cakes")]:
+        assert singularize(single) == singularize(plural)
+
+
+def test_normalize_name_groups_variants():
+    keys = {normalize_name(n, 1) for n in ["Lemonade", "lemonade!", " LEMONADES ", "Lemon-ade"[:0] + "lemonade"]}
+    assert keys == {"lemonade"}
+    assert normalize_name("Grandma's Cookies", 1) == normalize_name("grandmas cooky", 2)
+
+
+def test_normalize_name_never_merges_empty_names():
+    assert normalize_name("!!!", 7) != normalize_name("???", 8)
+
+
+def test_dedupe_keeps_best_rated_then_most_reviewed_then_lowest_ref():
+    df = pd.DataFrame({
+        "source_ref": [5, 3, 9, 2, 4],
+        "name": ["Pie", "pie!", "Pies", "Soup", "Soup"],
+        "aggregated_rating": [4.0, 4.5, 4.5, None, None],
+        "review_count": [10, 1, 7, None, None],
+    })
+    out, top = dedupe_by_name(df)
+    # Pie group: 3 and 9 tie on rating, 9 has more reviews. Soup group: all tied, lowest ref wins.
+    assert out["source_ref"].tolist() == [2, 9]
+    assert top.loc[0, "size"] == 3
+
+
+def test_add_recipe_key_is_sequential_by_source_ref():
+    out = add_recipe_key(pd.DataFrame({"source_ref": [30, 10, 20]}))
+    assert out["source_ref"].tolist() == [10, 20, 30]
+    assert out["recipe_key"].tolist() == [1, 2, 3]
