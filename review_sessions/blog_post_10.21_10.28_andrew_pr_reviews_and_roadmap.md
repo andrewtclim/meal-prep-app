@@ -6,7 +6,7 @@ Read Paul's first two PRs (Alembic migrations and CI) and learned what each tool
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
-| PR link (add once open) | Marks the CI and migrations rows in ROADMAP as done | Open |
+| [#16](https://github.com/andrewtclim/meal-prep-app/pull/16) | Marks the CI and migrations rows in ROADMAP as done, accepts DECISIONS #22 | Open |
 
 PRs reviewed, not opened by me: [#13](https://github.com/andrewtclim/meal-prep-app/pull/13) (Alembic migrations, merged), [#14](https://github.com/andrewtclim/meal-prep-app/pull/14) (Ruff and pytest in CI, merged), [#15](https://github.com/andrewtclim/meal-prep-app/pull/15) (Ruff fixes in the Alembic files, merged).
 
