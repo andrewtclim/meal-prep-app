@@ -92,3 +92,28 @@
 - **Where we use it:** `user_cuisine`, `user_allergen`, `ingredient_allergen`, and `user_recipe` in `alembic/versions/fe3310413886_create_preference_and_event_tables.py`.
 - **Why this over the alternative:** A single `cuisine_id` column on `users` can store only one cuisine per person. A list stuffed into one text column is hard to query and easy to misspell.
 - **Common question:** Why not just add a column? A column holds one value. A junction table holds as many links as you need.
+
+### Parquet
+- **What it is:** A compressed, typed file format that stores data by column. It keeps real types (integers, nulls, and lists of strings) instead of turning everything into text.
+- **Where we use it:** `data/raw/recipes.parquet`, and the stage outputs in `data/interim/` written by `pipelines/foodcom/clean.py`.
+- **Why this over the alternative:** CSV would flatten our ingredient and instruction lists into single strings that we would have to re-parse on every read, and a comma inside an ingredient name would break it. Parquet is also smaller and faster to read. The tradeoff is that you cannot open it in a text editor.
+- **Common question:** Why not CSV? Parquet keeps types and nested columns, so a file can be read back exactly as it was written.
+
+### Deterministic vs idempotent pipelines
+- **What it is:** Deterministic means the same data always produces the same output, even if the rows arrive in a different order. Idempotent means running the job again leaves the system in the same state as running it once (no duplicate rows). They are separate properties.
+- **Where we use it:** `pipelines/foodcom/clean.py` breaks dedupe ties by lowest `source_ref` so reruns pick the same row, and overwrites its output file. Stage 3 will use upserts (`INSERT ... ON CONFLICT`) for the database load.
+- **Why this over the alternative:** An append-only load duplicates every row on a retry. Without a final tiebreaker, a rerun could keep a different recipe and break the ids that paid LLM results are keyed on.
+- **Common question:** How do you make a data pipeline safe to rerun? Deterministic transforms, plus writes that overwrite or upsert on a natural key.
+
+### Deduplication by normalized key
+- **What it is:** Removing duplicate records by comparing a cleaned version of a field, not the raw value. We lowercase recipe names, drop punctuation, collapse whitespace, and singularize the last word, so "Lemonade", "lemonade!" and "Lemonades" match. One record per key is kept by a fixed rule.
+- **Where we use it:** `normalize_name` and `dedupe_by_name` in `pipelines/foodcom/clean.py`.
+- **Why this over the alternative:** Exact-string matching misses almost every duplicate because of case and punctuation. The tradeoff is that different recipes can share a name (187 "Banana Bread" entries), and we keep only the best-rated one.
+- **Common question:** How do you handle duplicates in messy data? Normalize to a key, group, and keep one row by a deterministic rule.
+
+### Dependency groups
+- **What it is:** Named lists of packages in `pyproject.toml` that are installed only when asked for. `dev` (pytest, ruff, alembic) is installed by default; `pipelines` (pandas, pyarrow) is installed only with `--group pipelines`.
+- **Where we use it:** `[dependency-groups]` in `pyproject.toml`. CI runs `uv sync --locked --dev --group pipelines`. The Docker image runs `uv sync --locked --no-dev`, so it gets neither.
+- **Why this over the alternative:** One big dependency list would ship pandas to the production API image, which never reads Food.com data. The tradeoff is remembering the flag: without it, pipeline tests fail with "no module named pandas".
+- **Common question:** How do you keep a production image small when the repo also has data-processing code? Dependency groups, so each environment installs only its own.
+
