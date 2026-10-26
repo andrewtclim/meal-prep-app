@@ -9,7 +9,6 @@ Run:  uv run python -m pipelines.foodcom.clean
 """
 
 import html
-import json
 import re
 from pathlib import Path
 
@@ -39,6 +38,22 @@ RENAMES = {
     "recipe_ingredient_quantities": "quantities_raw",  # unparsed strings; stage 2 produces numbers
     "recipe_instructions": "instructions",
 }
+
+# ISO 8601 duration columns (after snake_case) -> integer-minute columns.
+TIME_COLUMNS = {
+    "cook_time": "cook_minutes",
+    "prep_time": "prep_minutes",
+    "total_time": "total_minutes",
+}
+
+# Totals longer than this are usually marinating, proofing or freezing, not
+# active cooking. We flag them instead of dropping them (the recipe is fine).
+SUSPECT_TOTAL_MINUTES = 24 * 60
+
+# Only the shapes that occur in this dataset: PT<h>H<m>M<s>S with any part
+# optional. Day-based durations (P1D) and negative parts never match, so they
+# come back as missing rather than as a wrong number.
+DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
 
 def to_snake_case(name: str) -> str:
@@ -95,6 +110,41 @@ def make_arrays_plain(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def parse_duration_minutes(value) -> int | None:
+    """Convert an ISO 8601 duration like "PT1H30M" into whole minutes (90).
+
+    Input: a duration string, or a missing value (None / NaN).
+    Output: an int, or None if the value is missing or not a duration we trust.
+
+    Why None and not 0: a missing time and a zero time mean different things,
+    and a 0 would quietly pass any "under 90 minutes" filter later.
+    """
+    if not isinstance(value, str):
+        return None
+    match = DURATION_RE.match(value.strip())
+    # "PT" alone matches the pattern but has no parts, so it is not a duration.
+    if match is None or not any(match.groups()):
+        return None
+    hours, minutes, seconds = (int(g) if g else 0 for g in match.groups())
+    return hours * 60 + minutes + round(seconds / 60)
+
+
+def add_minutes_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add cook/prep/total minutes and a time_suspect flag; drop the ISO strings.
+
+    Minutes use pandas' nullable Int64 so a missing time stays missing instead
+    of turning the whole column into floats. A total of 0 minutes is set to
+    missing: Food.com writes "PT0S" when no time was entered (2,129 rows), and
+    no recipe takes zero minutes. Prep and cook zeros are kept, since "no prep"
+    is plausible. Source strings are dropped because data/raw still has them.
+    """
+    for source, target in TIME_COLUMNS.items():
+        df[target] = df[source].map(parse_duration_minutes).astype("Int64")
+    df["total_minutes"] = df["total_minutes"].mask(df["total_minutes"] == 0)
+    df["time_suspect"] = (df["total_minutes"] > SUSPECT_TOTAL_MINUTES).fillna(False)
+    return df.drop(columns=list(TIME_COLUMNS))
+
+
 def main() -> None:
     """Run the blocks written so far and print a quick look at the result."""
     df = load_raw()
@@ -102,14 +152,15 @@ def main() -> None:
 
     df = make_arrays_plain(df)
     df = trim_and_rename(df)
-    print(f"after block 1: {len(df):,} rows, {df.shape[1]} columns\n")
-    print(df.dtypes.to_string())
+    print(f"after block 1: {len(df):,} rows, {df.shape[1]} columns")
 
-    print("\nfirst row:")
-    row = df.iloc[0].to_dict()
-    print(json.dumps({k: (v if not isinstance(v, list) else v[:3]) for k, v in row.items()},
-                     indent=2, default=str)[:1800])
-
+    df = add_minutes_columns(df)
+    print(f"after block 2: {len(df):,} rows, {df.shape[1]} columns\n")
+    minutes = ["cook_minutes", "prep_minutes", "total_minutes"]
+    print("missing values:\n" + df[minutes].isna().sum().to_string())
+    print("\nminutes summary:\n" + df[minutes].describe(percentiles=[0.5, 0.9, 0.99]).round(1).to_string())
+    print(f"\ntime_suspect (total > 24h): {int(df['time_suspect'].sum()):,} rows")
+    print("\nsample:\n" + df[["name", *minutes, "time_suspect"]].head(5).to_string())
 
 if __name__ == "__main__":
     main()

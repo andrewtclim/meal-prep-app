@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 
 from pipelines.foodcom.clean import (
+    add_minutes_columns,
     make_arrays_plain,
+    parse_duration_minutes,
     to_snake_case,
     to_str_list,
     trim_and_rename,
@@ -42,3 +44,30 @@ def test_trim_and_rename_and_arrays():
     ]
     assert out.loc[0, "source_ref"] == 38 and out["source_ref"].dtype == "int64"
     assert out.loc[0, "images"] == [] and out.loc[0, "quantities_raw"] == ["1⁄4"]
+
+
+def test_parse_duration_minutes():
+    assert parse_duration_minutes("PT1H30M") == 90
+    assert parse_duration_minutes("PT24H") == 1440
+    assert parse_duration_minutes("PT45M") == 45
+    assert parse_duration_minutes("PT0S") == 0
+
+
+def test_parse_duration_minutes_returns_none_for_bad_input():
+    # Negative parts, empty durations, day-based durations, text and missing values.
+    for bad in ["PT-30M", "PT", "P1D", "garbage", "", None, float("nan")]:
+        assert parse_duration_minutes(bad) is None
+
+
+def test_add_minutes_columns():
+    df = pd.DataFrame({
+        "cook_time": [None, "PT30M", "PT0S"],
+        "prep_time": ["PT0S", "PT15M", "PT-1M"],
+        "total_time": ["PT0S", "PT45M", "PT25H"],
+    })
+    out = add_minutes_columns(df)
+    assert list(out.columns) == ["cook_minutes", "prep_minutes", "total_minutes", "time_suspect"]
+    assert out["total_minutes"].isna().tolist() == [True, False, False]  # PT0S total -> missing
+    assert out["prep_minutes"].tolist()[:2] == [0, 15]  # prep zero is kept
+    assert pd.isna(out["prep_minutes"][2]) and pd.isna(out["cook_minutes"][0])
+    assert out["time_suspect"].tolist() == [False, False, True]
