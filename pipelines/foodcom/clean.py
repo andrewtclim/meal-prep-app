@@ -145,6 +145,49 @@ def add_minutes_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=list(TIME_COLUMNS))
 
 
+def has_content(items: list[str]) -> bool:
+    """True if the list has at least one non-blank string.
+
+    Why not just len(items) > 0: a list of blanks (one recipe's instructions)
+    is as useless as an empty list, and len() would let it through.
+    """
+    return any(item != "" for item in items)
+
+
+def drop_junk_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Remove recipes we cannot use: no ingredients, or no instructions.
+
+    Output: the filtered frame, and how many rows each rule removed. Rules run
+    in order and each count is measured on what the previous rule left, so a
+    recipe missing both is counted once, under the first rule.
+
+    Why drop them: stage 2 reads the instructions to work out units, and a
+    recipe with no ingredients has nothing to plan with.
+    """
+    rules = {
+        "no ingredient parts": ~df["ingredient_parts"].map(has_content),
+        "no instructions": ~df["instructions"].map(has_content),
+    }
+    removed = {}
+    for name, is_junk in rules.items():
+        is_junk = is_junk.loc[df.index]  # df shrinks after each rule
+        removed[name] = int(is_junk.sum())
+        df = df[~is_junk]
+    return df.reset_index(drop=True), removed
+
+
+def add_quantities_aligned(df: pd.DataFrame) -> pd.DataFrame:
+    """Add quantities_aligned: True when parts and quantities have equal length.
+
+    We do not drop misaligned rows: only about 22% line up (the audit found the
+    same), so dropping them would discard most of the dataset. Equal length is a
+    necessary condition for matching by position, not proof; stage 2 does the
+    real pairing. The flag lets us measure that stage against a known-good group.
+    """
+    df["quantities_aligned"] = df["ingredient_parts"].map(len) == df["quantities_raw"].map(len)
+    return df
+
+
 def main() -> None:
     """Run the blocks written so far and print a quick look at the result."""
     df = load_raw()
@@ -161,6 +204,13 @@ def main() -> None:
     print("\nminutes summary:\n" + df[minutes].describe(percentiles=[0.5, 0.9, 0.99]).round(1).to_string())
     print(f"\ntime_suspect (total > 24h): {int(df['time_suspect'].sum()):,} rows")
     print("\nsample:\n" + df[["name", *minutes, "time_suspect"]].head(5).to_string())
+
+    df, removed = drop_junk_rows(df)
+    df = add_quantities_aligned(df)
+    print(f"\nafter block 3: {len(df):,} rows, {df.shape[1]} columns")
+    for rule, count in removed.items():
+        print(f"  removed {count:,} rows: {rule}")
+    print(f"  quantities_aligned: {df['quantities_aligned'].mean():.1%} of kept rows")
 
 if __name__ == "__main__":
     main()

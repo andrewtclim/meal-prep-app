@@ -3,6 +3,9 @@ import pandas as pd
 
 from pipelines.foodcom.clean import (
     add_minutes_columns,
+    add_quantities_aligned,
+    drop_junk_rows,
+    has_content,
     make_arrays_plain,
     parse_duration_minutes,
     to_snake_case,
@@ -71,3 +74,28 @@ def test_add_minutes_columns():
     assert out["prep_minutes"].tolist()[:2] == [0, 15]  # prep zero is kept
     assert pd.isna(out["prep_minutes"][2]) and pd.isna(out["cook_minutes"][0])
     assert out["time_suspect"].tolist() == [False, False, True]
+
+
+def test_has_content():
+    assert has_content(["a"]) and has_content(["", "a"])
+    assert not has_content([]) and not has_content(["", ""])
+
+
+def test_drop_junk_rows_counts_each_rule_once():
+    df = pd.DataFrame({
+        "ingredient_parts": [["salt"], [], [], ["egg"], ["milk"]],
+        "instructions": [["mix"], ["mix"], [], [""], ["stir"]],
+    })
+    out, removed = drop_junk_rows(df)
+    # Row 2 breaks both rules but is counted under the first only.
+    assert removed == {"no ingredient parts": 2, "no instructions": 1}
+    assert out["ingredient_parts"].tolist() == [["salt"], ["milk"]]
+    assert out.index.tolist() == [0, 1]
+
+
+def test_add_quantities_aligned():
+    df = pd.DataFrame({
+        "ingredient_parts": [["a", "b"], ["a"]],
+        "quantities_raw": [["1", "2"], ["1", "2", "3"]],
+    })
+    assert add_quantities_aligned(df)["quantities_aligned"].tolist() == [True, False]
