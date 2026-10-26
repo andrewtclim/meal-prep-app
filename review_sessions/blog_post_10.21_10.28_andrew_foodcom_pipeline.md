@@ -7,7 +7,7 @@ Read Paul's first two PRs (Alembic migrations and CI), fixed the stale ROADMAP r
 | PR | What it did | State |
 |---|---|---|
 | [#16](https://github.com/andrewtclim/meal-prep-app/pull/16) | Marks the CI and migrations rows in ROADMAP as done, accepts DECISIONS #22 | Merged |
-| Stage 1 PR (link once open) | `clean.py`, tests, DECISIONS #23 to #25, concepts | Open |
+| [#17](https://github.com/andrewtclim/meal-prep-app/pull/17) | `clean.py`, tests, DECISIONS #23 to #25, concepts | Open |
 
 PRs reviewed, not opened by me: [#13](https://github.com/andrewtclim/meal-prep-app/pull/13) (Alembic migrations, merged), [#14](https://github.com/andrewtclim/meal-prep-app/pull/14) (Ruff and pytest in CI, merged), [#15](https://github.com/andrewtclim/meal-prep-app/pull/15) (Ruff fixes in the Alembic files, merged).
 
