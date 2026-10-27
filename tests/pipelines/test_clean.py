@@ -70,6 +70,10 @@ def test_parse_duration_minutes():
     assert parse_duration_minutes("PT24H") == 1440
     assert parse_duration_minutes("PT45M") == 45
     assert parse_duration_minutes("PT0S") == 0
+    # Seconds round up, so a positive duration is never 0 minutes.
+    assert parse_duration_minutes("PT30S") == 1
+    assert parse_duration_minutes("PT1M30S") == 2
+    assert parse_duration_minutes("PT90S") == 2
 
 
 def test_parse_duration_minutes_returns_none_for_bad_input():

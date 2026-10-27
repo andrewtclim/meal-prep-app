@@ -162,6 +162,7 @@ def parse_duration_minutes(value) -> int | None:
 
     Input: a duration string, or a missing value (None / NaN).
     Output: an int, or None if the value is missing or not a duration we trust.
+    Seconds round up to whole minutes ("PT30S" -> 1); "PT0S" stays 0.
 
     Why None and not 0: a missing time and a zero time mean different things,
     and a 0 would quietly pass any "under 90 minutes" filter later.
@@ -173,7 +174,9 @@ def parse_duration_minutes(value) -> int | None:
     if match is None or not any(match.groups()):
         return None
     hours, minutes, seconds = (int(g) if g else 0 for g in match.groups())
-    return hours * 60 + minutes + round(seconds / 60)
+    # Round seconds up: Python's round() sends 30s to 0 (round-half-to-even), which
+    # would then read as "no time". Any positive duration is at least 1 minute.
+    return hours * 60 + minutes + math.ceil(seconds / 60)
 
 
 def add_minutes_columns(df: pd.DataFrame) -> pd.DataFrame:
