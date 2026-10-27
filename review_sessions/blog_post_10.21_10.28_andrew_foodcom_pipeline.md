@@ -72,5 +72,27 @@ flowchart LR
 - The category filter began as a list of dinner categories I guessed from the top 70 values. It was biased toward meat, so we switched to excluding the clearly-not-dinner groups.
 - Open: 213k recipes is about 310 MB of data per copy, over the free database limit. We need a larger Supabase plan or a single stored copy before stage 3.
 
+## Session: 2026-10-27
+### What we worked on and why
+Paul reviewed PR #17 and left five comments. We checked each one against the data before changing anything, then fixed them on the same branch as separate commits, so the PR updated in place and each comment thread could point to one commit.
+
+### Key code
+`pipelines/foodcom/clean.py`
+```python
+def count_nonblank(items: list[str]) -> int:
+    return sum(1 for item in items if item)
+```
+The ingredient filter used `len()`, which counts blank slots (`["salt", "", ""]` passed the 3-ingredient minimum). It now counts non-blank items. In this data no recipe has a blank ingredient part, so the subset stayed at 212,846, but the filter is now correct for future data.
+
+```python
+return hours * 60 + minutes + math.ceil(seconds / 60)
+```
+Python's `round(30 / 60)` is 0 (it rounds halves to the even number), so `PT30S` would have become 0 and then missing. `ceil` makes any positive duration at least 1 minute. No effect today: the raw file has no durations with a nonzero seconds part.
+
+### Decisions and concepts
+- **Mistake and fix:** I edited the status line of DECISIONS #14, which is Accepted, citing a precedent. The rule says never edit an accepted entry, and #24 already records the amendment, so it was reverted. Editing #8 (still Open) was fine.
+- **The 90-minute cutoff** is a judgment call, not derived from the data. The sensitivity table (60 / 90 / 120 / 180 minutes gives 180,740 / 212,846 / 222,269 / 232,064 recipes) is now in DECISIONS #25.
+- **Known limit, left as is:** hyphens become spaces, so `lemon-ade` does not match `lemonade`. Joining them would break `Chocolate-Chip Cookies`.
+
 ## What we'd explain differently next time
 What `down_revision` does and why running the same migration command twice is safe.

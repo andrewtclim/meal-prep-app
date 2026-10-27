@@ -36,10 +36,11 @@ Each filter applies after the one above it.
 |---|---|---|
 | Start | All cleaned recipes | 428,419 |
 | Time | Total time of 90 minutes or less | 362,209 |
-| Ingredients | 3 to 20 ingredients | 338,888 |
+| Ingredients | 3 to 20 ingredients (blank slots are not counted) | 338,888 |
 | Category | Leave out desserts, breads, drinks, breakfast, sauces, spreads and non-food | **212,846** |
 | Rating | Not required (half of all recipes have none) | 212,846 |
 
+- The 90-minute cutoff is a judgment call, not derived from data. At 60 minutes we would keep 180,740 recipes, at 120 we would keep 222,269, so the count flattens above 90 (DECISIONS #25).
 - We chose to leave categories out, not to pick dinner categories, so vegetarian and cuisine-labeled dinners stay in.
 - The rules are named constants at the top of `clean.py`, so changing one and rerunning takes about 11 seconds.
 - We estimate about 310 MB of data for the 212,846 recipes. That is over the free database limit once we add indexes and a second copy (DECISIONS #25).
