@@ -279,6 +279,10 @@ def normalize_name(name: str, source_ref: int) -> str:
     "Lemonades" share a key. A name with no letters or digits at all gets a
     unique key from its id, so empty names are never merged into one giant
     "duplicate" group.
+
+    Known limit: a hyphen becomes a space, so "Chocolate-Chip Cookies" matches
+    "Chocolate Chip Cookies" but "lemon-ade" does not match "lemonade". Joining
+    hyphens would fix one and break the other; fixing both needs a dictionary.
     """
     text = re.sub(r"[\'\u2019]", "", name.lower())
     words = re.sub(r"[^\w\s]|_", " ", text).split()
