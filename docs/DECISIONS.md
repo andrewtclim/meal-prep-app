@@ -102,7 +102,7 @@
 
 ### 14. ELT with a raw schema
 - **Date:** 2026-10-02
-- **Status:** Accepted, source-storage part amended by #24 (Proposed)
+- **Status:** Accepted
 - **Decision:** Every source lands untouched in a `raw` schema in Postgres. Transforms produce the clean tables the app uses. Pipelines are idempotent, use watermarks for incremental loads, and log each run.
 - **Why:** Ingredient normalization will keep improving. With raw data kept, we rerun transforms instead of re-pulling sources, and can tell whether a bad row came from the source or from us.
 - **Impact:** Spoonacular is still never stored, not even in `raw` (#5). Google Places follows #9.
