@@ -201,6 +201,15 @@ def has_content(items: list[str]) -> bool:
     return any(item != "" for item in items)
 
 
+def count_nonblank(items: list[str]) -> int:
+    """Count the non-blank strings in a list.
+
+    Why not len(): ingredient_parts may keep blank slots so it stays aligned
+    with quantities, and len() would count those blanks as ingredients.
+    """
+    return sum(1 for item in items if item)
+
+
 def drop_junk_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     """Remove recipes we cannot use: no ingredients, or no instructions.
 
@@ -355,7 +364,7 @@ def funnel_steps() -> list[tuple[str, callable]]:
         (f"total <= {MAX_TOTAL_MINUTES} min", lambda d: (d["total_minutes"] <= MAX_TOTAL_MINUTES).fillna(False)),
         (
             f"{MIN_INGREDIENTS}-{MAX_INGREDIENTS} ingredients",
-            lambda d: d["ingredient_parts"].map(len).between(MIN_INGREDIENTS, MAX_INGREDIENTS),
+            lambda d: d["ingredient_parts"].map(count_nonblank).between(MIN_INGREDIENTS, MAX_INGREDIENTS),
         ),
         ("not an excluded category", lambda d: ~d["recipe_category"].isin(EXCLUDED_CATEGORIES)),
     ]

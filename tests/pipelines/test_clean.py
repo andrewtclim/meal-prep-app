@@ -2,10 +2,13 @@ import numpy as np
 import pandas as pd
 
 from pipelines.foodcom.clean import (
+    MAX_INGREDIENTS,
+    MIN_INGREDIENTS,
     add_minutes_columns,
     add_quantities_aligned,
     add_recipe_key,
     apply_funnel,
+    count_nonblank,
     dedupe_by_name,
     drop_junk_rows,
     estimate_row_bytes,
@@ -193,3 +196,14 @@ def test_category_filter_excludes_desserts_but_keeps_unknown_and_vegetarian():
     mask_fn = dict(funnel_steps())["not an excluded category"]
     cats = pd.DataFrame({"recipe_category": ["Dessert", "Vegetable", None, "One Dish Meal", "Beverages"]})
     assert mask_fn(cats).tolist() == [False, True, True, True, False]
+
+
+def test_count_nonblank_ignores_blank_slots():
+    assert count_nonblank(["salt", "", ""]) == 1
+    assert count_nonblank([]) == 0
+
+
+def test_ingredient_filter_does_not_count_blank_slots():
+    mask_fn = dict(funnel_steps())[f"{MIN_INGREDIENTS}-{MAX_INGREDIENTS} ingredients"]
+    df = pd.DataFrame({"ingredient_parts": [["salt", "", ""], ["a", "b", "c"], ["a"] * 21]})
+    assert mask_fn(df).tolist() == [False, True, False]
