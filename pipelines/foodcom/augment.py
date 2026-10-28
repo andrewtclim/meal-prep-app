@@ -37,6 +37,34 @@ CUISINES = [
 
 MAX_CUISINES = 3
 
+# Rule-based cuisine baseline: Food.com keyword or category (lowercased) -> our
+# cuisine. Only words that name a specific cuisine are mapped. "european" and
+# "asian" are left out on purpose: they cover tens of thousands of recipes of
+# every kind, so mapping them would add noise, not signal. There is no keyword
+# at all for italian, french, american, irish or mediterranean, so this table
+# cannot produce those; only the LLM can.
+CUISINE_KEYWORDS = {
+    "mexican": "mexican", "tex mex": "mexican",
+    "southwestern u.s.": "american",
+    "chinese": "chinese",
+    "indian": "indian", "pakistani": "indian",
+    "thai": "thai",
+    "japanese": "japanese",
+    "korean": "korean",
+    "vietnamese": "vietnamese",
+    "filipino": "other", "indonesian": "other", "south american": "other",
+    "greek": "greek",
+    "spanish": "spanish",
+    "german": "german",
+    "scottish": "british_irish",
+    "caribbean": "caribbean",
+    "cajun": "cajun_creole", "creole": "cajun_creole",
+    "african": "african", "south african": "african",
+    "moroccan": "african", "ethiopian": "african",
+    "lebanese": "middle_eastern", "turkish": "middle_eastern",
+    "southwest asia (middle east)": "middle_eastern",
+}  # fmt: skip
+
 
 def build_output_schema() -> dict:
     """Return the JSON schema the API will force every answer to match.
@@ -168,3 +196,21 @@ def validate_result(result: dict, n_ingredients: int) -> list[str]:
         problems.append("duplicate cuisines")
 
     return problems
+
+
+def baseline_cuisines(keywords, category) -> list[str]:
+    """Guess a recipe's cuisines from its Food.com keywords and category, no LLM.
+
+    Inputs: the recipe's keyword list and its single recipe_category value.
+    Output: up to MAX_CUISINES cuisines in CUISINES, in first-seen order, or an
+    empty list when no keyword names a cuisine (about 3 in 4 recipes). Free and
+    deterministic, so it serves two jobs: a floor the LLM must beat, and a set of
+    rough labels to sanity-check the LLM against. The labels are biased, though:
+    they exist only for recipes whose uploader tagged a cuisine.
+    """
+    found = []
+    for term in [*keywords, category]:
+        cuisine = CUISINE_KEYWORDS.get(str(term).strip().lower())
+        if cuisine and cuisine not in found:
+            found.append(cuisine)
+    return found[:MAX_CUISINES]

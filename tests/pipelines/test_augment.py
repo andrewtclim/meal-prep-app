@@ -1,10 +1,12 @@
 import json
 
 from pipelines.foodcom.augment import (
+    CUISINE_KEYWORDS,
     CUISINES,
     MAX_CUISINES,
     SYSTEM_PROMPT,
     UNITS,
+    baseline_cuisines,
     build_output_schema,
     build_user_message,
     validate_result,
@@ -107,3 +109,27 @@ def test_cuisine_count_and_duplicates():
     assert len(too_many) > MAX_CUISINES
     assert validate_result(make_result(cuisines=too_many), 3)
     assert validate_result(make_result(cuisines=["italian", "italian"]), 3)
+
+
+def test_keyword_table_only_uses_allowed_cuisines():
+    assert set(CUISINE_KEYWORDS.values()) <= set(CUISINES)
+
+
+def test_baseline_maps_keywords_and_category():
+    assert baseline_cuisines(["Weeknight", "Thai", "Easy"], "Asian") == ["thai"]
+    assert baseline_cuisines([], "Mexican") == ["mexican"]
+
+
+def test_baseline_dedupes_and_merges_synonyms():
+    # cajun and creole share one cuisine; keyword and category can repeat it
+    assert baseline_cuisines(["Cajun", "Creole"], "Cajun") == ["cajun_creole"]
+
+
+def test_baseline_ignores_coarse_words_and_missing_values():
+    assert baseline_cuisines(["European", "Asian"], "European") == []
+    assert baseline_cuisines(["Easy"], None) == []
+
+
+def test_baseline_caps_at_max_cuisines():
+    keywords = ["Mexican", "Thai", "Greek", "Korean"]
+    assert baseline_cuisines(keywords, None) == ["mexican", "thai", "greek"]
