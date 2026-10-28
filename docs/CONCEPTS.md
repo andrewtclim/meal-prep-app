@@ -117,3 +117,33 @@
 - **Why this over the alternative:** One big dependency list would ship pandas to the production API image, which never reads Food.com data. The tradeoff is remembering the flag: without it, pipeline tests fail with "no module named pandas".
 - **Common question:** How do you keep a production image small when the repo also has data-processing code? Dependency groups, so each environment installs only its own.
 
+
+### Structured outputs and closed vocabularies
+- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 19 units. The guarantee is on the shape of the answer, not on whether the values are correct.
+- **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
+- **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
+- **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
+
+### Baseline for evaluation
+- **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
+- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 15.9% of the subset. It has no way to say "italian", because no tag in the data does.
+- **Why this over the alternative:** Without a baseline, "the model tagged 100% of recipes" sounds good but says nothing about whether it is right. The tradeoff is that the baseline's labels are biased toward recipes whose uploader added a cuisine tag, so agreement with it does not prove accuracy on the other 84%.
+- **Common question:** Why compare a model to a baseline? To show it adds value over something simple, and to separate "covers more" from "is more correct".
+
+### Append-only results file (resumable jobs)
+- **What it is:** Writing each finished result as one line to a file, flushed right away, and skipping already-finished keys on a rerun. A crash loses at most the call in flight.
+- **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `recipe_key`.
+- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs (a list index is not), or a rerun could skip or repeat the wrong recipes. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
+- **Common question:** How do you make a long, paid job safe to rerun? Save results as you go under a stable key, and skip keys already saved.
+
+### Environment file and .env.example
+- **What it is:** `.env` holds real secrets (API key, database URL) and is git-ignored. `.env.example` lists the same variable names with empty values and is committed, so a new clone knows what to fill in.
+- **Where we use it:** `.env.example` at the repo root; `uv run --env-file .env ...` loads `.env` for a run.
+- **Why this over the alternative:** Putting keys in code or committing `.env` leaks them into git history, which is permanent. Having no template means the next person finds the missing variables by crashing. The tradeoff is keeping the template in step with the variables the code reads.
+- **Common question:** How do you manage secrets in a repo? Keep them out of git, document the names in a template, and inject real values at run time.
+
+### LLM cost: input, output, thinking and batching
+- **What it is:** LLM calls are billed per token, with output priced higher than input (5 times for Claude Haiku 5.5: $0.10 vs $0.50 per million tokens, from the model price table cached 2026-10-06). Models that "think" before answering also bill those thinking tokens as output. The Message Batches API runs requests asynchronously (usually within an hour) at half price.
+- **Where we use it:** `estimate_cost` and `print_report` in `pipelines/foodcom/augment.py` project the cost of the full run from measured tokens per recipe. The Batches API is planned for the full run, not built yet.
+- **Why this over the alternative:** Estimating cost from the text length alone was off by about 2 times in our 3-recipe test (about 1,570 input and 700 output tokens per recipe, against our guess of 800 and 350). We suspect thinking tokens but have not confirmed it. Measuring on a pilot before a large run avoids a surprise bill.
+- **Common question:** How do you estimate and control the cost of an LLM pipeline? Measure real tokens per item on a small sample, project to the full size, and use batching for work that is not interactive.

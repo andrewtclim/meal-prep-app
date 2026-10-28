@@ -1,13 +1,14 @@
 # Week of 10.21 to 10.28: Cleaning the Food.com data (Andrew)
 
 ## Summary
-Read Paul's first two PRs (Alembic migrations and CI), fixed the stale ROADMAP rows, then built stage 1 of the Food.com pipeline: a script that cleans 522k raw recipes down to a 212,846-recipe subset.
+Read Paul's first two PRs (Alembic migrations and CI), fixed the stale ROADMAP rows, then built stage 1 of the Food.com pipeline (a script that cleans 522k raw recipes down to a 212,846-recipe subset) and started stage 2, where a Claude model adds units and cuisines. Stage 2 has a working 3-recipe test; the full run waits on a budget talk.
 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
 | [#16](https://github.com/andrewtclim/meal-prep-app/pull/16) | Marks the CI and migrations rows in ROADMAP as done, accepts DECISIONS #22 | Merged |
 | [#17](https://github.com/andrewtclim/meal-prep-app/pull/17) | `clean.py`, tests, DECISIONS #23 to #25, concepts | Open |
+| (this PR, number added after opening) | `augment.py`, tests, DECISIONS #26, concepts, `.env.example` | Draft |
 
 PRs reviewed, not opened by me: [#13](https://github.com/andrewtclim/meal-prep-app/pull/13) (Alembic migrations, merged), [#14](https://github.com/andrewtclim/meal-prep-app/pull/14) (Ruff and pytest in CI, merged), [#15](https://github.com/andrewtclim/meal-prep-app/pull/15) (Ruff fixes in the Alembic files, merged).
 
@@ -93,6 +94,67 @@ Python's `round(30 / 60)` is 0 (it rounds halves to the even number), so `PT30S`
 - **Mistake and fix:** I edited the status line of DECISIONS #14, which is Accepted, citing a precedent. The rule says never edit an accepted entry, and #24 already records the amendment, so it was reverted. Editing #8 (still Open) was fine.
 - **The 90-minute cutoff** is a judgment call, not derived from the data. The sensitivity table (60 / 90 / 120 / 180 minutes gives 180,740 / 212,846 / 222,269 / 232,064 recipes) is now in DECISIONS #25.
 - **Known limit, left as is:** hyphens become spaces, so `lemon-ade` does not match `lemonade`. Joining them would break `Chocolate-Chip Cookies`.
+
+## Session: 2026-10-27 (part 2): starting stage 2
+### What we worked on and why
+Stage 1 gave us clean recipes with no units, so stage 2 asks a Claude model to read each recipe and fill in an amount, a unit and the cuisines. We built it in blocks, with tests that use a fake client so nothing costs money until we choose. We stopped after a 3-recipe test against the real API. We are not running the full set yet because it costs money and we want to agree a budget first.
+
+### Diagram
+```mermaid
+flowchart LR
+    A[recipes_subset.parquet] --> B[build_user_message: recipe as numbered text]
+    B --> C[API call: rules + recipe + answer schema]
+    C --> D[model answer in schema shape]
+    D --> E{validate_result}
+    E -- problems --> F[one retry that lists the problems]
+    F --> E
+    E -- ok --> G[append to augment_results.jsonl]
+```
+
+### Key code
+`pipelines/foodcom/augment.py`
+```python
+"output_config": {
+    "effort": "low",
+    "format": {"type": "json_schema", "schema": build_output_schema()},
+},
+```
+The `format` key sends our schema with the request, and the API makes the answer fit it, so the model cannot invent a unit or leave out a field. `effort: low` keeps the thinking short, because this is extraction, not hard reasoning.
+
+```python
+"ingredients": {"type": "array", "items": {"properties": {
+    "position": {"type": "integer"},
+    "quantity": {"type": ["number", "null"]},
+    "unit": {"type": "string", "enum": UNITS}}}}
+```
+The model answers by ingredient position and not by repeating the name. In 10.1% of recipes the same ingredient appears twice (butter for the filling and again for the sauce), so a name cannot tell the two apart, and a position can. It is also fewer output tokens, which cost 5 times as much as input.
+
+```python
+def validate_result(result: dict, n_ingredients: int) -> list[str]:
+```
+The schema cannot say "exactly one entry per ingredient" or "null quantity only for to-taste", so this checks them and returns a list of problems. The list becomes the text of the one retry, so the model is told what to fix.
+
+```python
+def load_done_keys(path) -> set[str]:
+    ...
+    return {r["recipe_key"] for r in records if r["status"] == "ok"}
+```
+Each result is appended to a file as it arrives, and a rerun skips the recipes already saved. The key is our `recipe_key`, not a list position, because batch results come back in any order and the key must mean the same recipe on every run.
+
+### Results of the 3-recipe test
+| Recipe | Ingredients | Cuisines | Tokens in / out | Attempts |
+|---|---|---|---|---|
+| Blue Ribbon Kielbasa | 5 | other, american | 1,450 / 504 | 1 |
+| Gorgonzola Pear Crostini | 9 | italian, american | 1,531 / 635 | 1 |
+| Chicken Breast With Grand Marinier Sauce | 13 | french, american | 1,719 / 966 | 1 |
+
+All three passed validation on the first try. The full per-ingredient table for the chicken recipe is in `pipelines/foodcom/README.md`. Accuracy was only eyeballed, not measured. Cost came out at about twice our estimate (1,570 tokens in and 700 out per recipe), which projects to about $54 for the full run through the Batches API. That is a rough figure from three recipes.
+
+### Decisions and concepts
+- **Decision:** [DECISIONS #26](../docs/DECISIONS.md) (Proposed): structured outputs, fixed unit and cuisine lists, pilot first, Haiku 5.5 on trial.
+- **Concepts added to `docs/CONCEPTS.md`:** structured outputs and closed vocabularies, baseline for evaluation, append-only results file, environment file and `.env.example`, LLM cost (input, output, thinking, batching).
+- **Cuisine baseline:** a keyword lookup labels only 15.9% of recipes and cannot name Italian or French at all, because no tag in the data does. That is the gap the model is there to fill.
+- **Mistakes caught:** my first cost estimate (about $30) was low by half, because I guessed token counts from text length. A real call showed the difference.
 
 ## What we'd explain differently next time
 What `down_revision` does and why running the same migration command twice is safe.
