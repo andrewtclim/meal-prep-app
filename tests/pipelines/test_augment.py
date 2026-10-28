@@ -1,14 +1,24 @@
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from pipelines.foodcom.augment import (
     CUISINE_KEYWORDS,
     CUISINES,
     MAX_CUISINES,
+    MODEL,
     SYSTEM_PROMPT,
     UNITS,
+    append_record,
+    augment_recipe,
     baseline_cuisines,
     build_output_schema,
+    build_request_params,
     build_user_message,
+    estimate_cost,
+    load_done_keys,
+    parse_answer,
     validate_result,
 )
 
@@ -133,3 +143,96 @@ def test_baseline_ignores_coarse_words_and_missing_values():
 def test_baseline_caps_at_max_cuisines():
     keywords = ["Mexican", "Thai", "Greek", "Korean"]
     assert baseline_cuisines(keywords, None) == ["mexican", "thai", "greek"]
+
+
+# --- Block 3: request, retry, resume (no network: a fake client stands in) ---
+
+
+class FakeClient:
+    """Stands in for anthropic.Anthropic; replays canned answers and records requests."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.requests = []
+        self.messages = self
+
+    def create(self, **params):
+        self.requests.append(params)
+        reply = self.replies.pop(0)
+        if isinstance(reply, SimpleNamespace):
+            return reply
+        return fake_message(json.dumps(reply))
+
+
+def fake_message(text, stop_reason="end_turn", tokens_in=100, tokens_out=50):
+    return SimpleNamespace(
+        stop_reason=stop_reason,
+        content=[SimpleNamespace(type="text", text=text)],
+        usage=SimpleNamespace(input_tokens=tokens_in, output_tokens=tokens_out),
+    )
+
+
+def test_request_params_carry_schema_effort_and_system_prompt():
+    params = build_request_params(make_recipe())
+    assert params["model"] == MODEL and params["system"] == SYSTEM_PROMPT
+    assert params["output_config"]["effort"] == "low"
+    assert params["output_config"]["format"]["schema"] == build_output_schema()
+
+
+def test_request_params_append_problems_on_retry():
+    params = build_request_params(make_recipe(), problems=["wrong count"])
+    assert "wrong count" in params["messages"][0]["content"]
+    assert len(params["messages"]) == 1
+
+
+def test_parse_answer_rejects_early_stop_and_bad_json():
+    with pytest.raises(ValueError, match="stopped early"):
+        parse_answer(fake_message("{}", stop_reason="max_tokens"))
+    with pytest.raises(ValueError):
+        parse_answer(fake_message("not json"))
+
+
+def test_estimate_cost_and_batch_discount():
+    assert estimate_cost(1_000_000, 0) == pytest.approx(0.10)
+    assert estimate_cost(0, 1_000_000) == pytest.approx(0.50)
+    assert estimate_cost(1_000_000, 1_000_000, batch=True) == pytest.approx(0.30)
+
+
+def test_augment_recipe_ok_first_try():
+    client = FakeClient([make_result()])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    assert record["status"] == "ok" and record["attempts"] == 1
+    assert record["recipe_key"] == "k1" and len(client.requests) == 1
+
+
+def test_augment_recipe_retries_once_with_problems_and_sums_tokens():
+    bad = make_result()
+    bad["ingredients"].pop()
+    client = FakeClient([bad, make_result()])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    assert record["status"] == "ok" and record["attempts"] == 2
+    assert record["input_tokens"] == 200 and record["output_tokens"] == 100
+    assert "positions" in client.requests[1]["messages"][0]["content"]
+
+
+def test_augment_recipe_fails_after_two_bad_answers():
+    bad = make_result(cuisines=[])
+    client = FakeClient([bad, bad])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    assert record["status"] == "failed" and record["attempts"] == 2
+    assert record["problems"] and len(client.requests) == 2
+
+
+def test_augment_recipe_treats_cut_off_answer_as_a_problem():
+    cut = fake_message("{", stop_reason="max_tokens")
+    client = FakeClient([cut, make_result()])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    assert record["status"] == "ok" and record["attempts"] == 2
+
+
+def test_resume_skips_ok_but_not_failed(tmp_path):
+    path = tmp_path / "out.jsonl"
+    assert load_done_keys(path) == set()
+    append_record(path, {"recipe_key": "a", "status": "ok"})
+    append_record(path, {"recipe_key": "b", "status": "failed"})
+    assert load_done_keys(path) == {"a"}

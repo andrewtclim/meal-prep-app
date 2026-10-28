@@ -11,7 +11,32 @@ the answer: the closed vocabularies, the output schema, the prompt, and a
 validator. No API call happens here, so it is free to test.
 """
 
+import argparse
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import anthropic
 import pandas as pd
+
+from pipelines.foodcom.clean import SUBSET_PATH
+
+RESULTS_PATH = Path("data/interim/augment_results.jsonl")
+
+# Cheapest current model; the pilot's accuracy check decides if it is good enough.
+MODEL = "claude-haiku-5-5"
+# USD per million tokens, from the model table cached 2026-10-06. Treated as an
+# estimate: the real bill is whatever the console shows. Batch runs cost half.
+PRICE_IN_PER_M = 0.10
+PRICE_OUT_PER_M = 0.50
+BATCH_DISCOUNT = 0.5
+# Haiku 5.5 thinks by default and thinking tokens count against this cap, so it
+# is generous; we only pay for tokens actually produced.
+MAX_OUTPUT_TOKENS = 4096
+
+PILOT_SIZE = 200
+PILOT_SEED = 42
+WORKERS = 8  # concurrent requests; the SDK retries rate-limit errors itself
 
 # Closed vocabularies. The model may only pick from these, so downstream code can
 # match on exact strings instead of cleaning "Tbsp.", "tbsp" and "tablespoon".
@@ -214,3 +239,185 @@ def baseline_cuisines(keywords, category) -> list[str]:
         if cuisine and cuisine not in found:
             found.append(cuisine)
     return found[:MAX_CUISINES]
+
+
+def build_request_params(recipe: dict, problems: list[str] | None = None) -> dict:
+    """Build the keyword arguments for one Messages API call about one recipe.
+
+    Inputs: a recipe row as a dict, and optionally the problems found in a
+    previous answer. Output: a dict ready for `client.messages.create(**params)`.
+    One builder feeds both the pilot (direct calls) and the later Batches run, so
+    the two cannot drift apart. On a retry the problems are appended to the same
+    single user message instead of replaying the model's earlier answer as a
+    second turn: it is simpler and avoids resending its thinking blocks.
+    """
+    text = build_user_message(recipe)
+    if problems:
+        text += "\n\nYour previous answer was rejected for these reasons. Fix them:\n"
+        text += "\n".join(f"- {p}" for p in problems)
+    return {
+        "model": MODEL,
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "system": SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": text}],
+        # Low effort: this is extraction, not hard reasoning, and thinking is billed
+        # as output. The format key is what forces the answer into our schema.
+        "output_config": {
+            "effort": "low",
+            "format": {"type": "json_schema", "schema": build_output_schema()},
+        },
+    }
+
+
+def parse_answer(message) -> dict:
+    """Pull the JSON answer out of an API response.
+
+    Raises ValueError (JSONDecodeError is one) if the model stopped early, for
+    example on the token cap, or returned no text. The schema guarantees valid
+    JSON only for a finished answer, so a cut-off one must be treated as failed.
+    """
+    if message.stop_reason != "end_turn":
+        raise ValueError(f"model stopped early: {message.stop_reason}")
+    text = next((b.text for b in message.content if b.type == "text"), None)
+    if text is None:
+        raise ValueError("response had no text block")
+    return json.loads(text)
+
+
+def estimate_cost(input_tokens: int, output_tokens: int, batch: bool = False) -> float:
+    """Return the estimated USD cost of the given token counts at the listed prices."""
+    cost = (input_tokens * PRICE_IN_PER_M + output_tokens * PRICE_OUT_PER_M) / 1_000_000
+    return cost * BATCH_DISCOUNT if batch else cost
+
+
+def augment_recipe(client, recipe: dict) -> dict:
+    """Ask the model about one recipe, validate, and retry once if it fails.
+
+    Inputs: an API client and a recipe dict. Output: one result record (the line we
+    store): recipe_key, status "ok" or "failed", the answer, any remaining problems,
+    attempts, and token counts summed over both attempts so cost is never
+    under-reported. Two attempts is the cap: a second failure usually means a
+    recipe the model cannot handle, and a third paid try rarely fixes it.
+    """
+    n = len(recipe["ingredient_parts"])
+    problems, answer = None, None
+    tokens_in = tokens_out = 0
+    for attempt in (1, 2):
+        message = client.messages.create(**build_request_params(recipe, problems))
+        tokens_in += message.usage.input_tokens
+        tokens_out += message.usage.output_tokens
+        try:
+            answer = parse_answer(message)
+            problems = validate_result(answer, n)
+        except ValueError as error:
+            answer, problems = None, [str(error)]
+        if not problems:
+            break
+    return {
+        "recipe_key": recipe["recipe_key"],
+        "status": "failed" if problems else "ok",
+        "attempts": attempt,
+        "result": answer,
+        "problems": problems or [],
+        "input_tokens": tokens_in,
+        "output_tokens": tokens_out,
+        "model": MODEL,
+    }
+
+
+def load_done_keys(path: Path) -> set[str]:
+    """Return the recipe_keys already stored with status "ok" (empty if no file).
+
+    This is what makes a rerun safe: those recipes were already paid for, so they
+    are skipped. Failed records are not counted as done, so a rerun retries them.
+    """
+    if not path.exists():
+        return set()
+    with path.open() as f:
+        records = (json.loads(line) for line in f if line.strip())
+        return {r["recipe_key"] for r in records if r["status"] == "ok"}
+
+
+def append_record(path: Path, record: dict) -> None:
+    """Append one record as a JSON line and flush it to disk immediately.
+
+    Append-only with a flush per record means a crash loses at most the call in
+    flight, never earlier paid results. This file is the only copy of paid output
+    (DECISIONS #24), so back it up somewhere other than the laptop.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+
+
+def print_report(records: list[dict], total_recipes: int) -> None:
+    """Print how the run went and what the full run would cost at this rate.
+
+    The projection scales the measured per-recipe tokens to the whole subset, in
+    both direct and Batches pricing, so the decision to go bigger rests on a
+    measurement from our own recipes and not on a guess.
+    """
+    n = len(records)
+    ok = sum(r["status"] == "ok" for r in records)
+    retried = sum(r["attempts"] > 1 for r in records)
+    tokens_in = sum(r["input_tokens"] for r in records)
+    tokens_out = sum(r["output_tokens"] for r in records)
+    print(f"\nrecipes: {n}  ok: {ok}  failed: {n - ok}  needed a retry: {retried}")
+    print(f"tokens per recipe: {tokens_in / n:.0f} in, {tokens_out / n:.0f} out")
+    print(f"cost of this run: ${estimate_cost(tokens_in, tokens_out):.4f}")
+    scale = total_recipes / n
+    full_in, full_out = tokens_in * scale, tokens_out * scale
+    print(f"projected full run ({total_recipes:,} recipes):")
+    print(f"  direct calls: ${estimate_cost(full_in, full_out):,.2f}")
+    print(f"  Batches API : ${estimate_cost(full_in, full_out, batch=True):,.2f}")
+
+
+def run_pilot(client, df: pd.DataFrame, n: int, seed: int, workers: int) -> list[dict]:
+    """Run the model on a fixed random sample, skipping recipes already stored.
+
+    The sample is drawn first and the finished keys removed afterwards, so the
+    same seed always means the same recipes and a rerun only pays for the gap.
+    Workers call the API concurrently, but only this thread writes the file, so
+    lines cannot interleave. A failed API call is reported and left unwritten, so
+    the next run retries it.
+    """
+    sample = df.sample(n=min(n, len(df)), random_state=seed)
+    done = load_done_keys(RESULTS_PATH)
+    todo = [row.to_dict() for _, row in sample.iterrows() if row["recipe_key"] not in done]
+    print(f"sample {len(sample)}, already done {len(sample) - len(todo)}, to run {len(todo)}")
+
+    records = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(augment_recipe, client, recipe): recipe for recipe in todo}
+        for future in as_completed(futures):
+            try:
+                record = future.result()
+            except anthropic.APIError as error:
+                print(f"API error on {futures[future]['recipe_key']}: {error}")
+                continue
+            append_record(RESULTS_PATH, record)
+            records.append(record)
+            if len(records) % 25 == 0:
+                print(f"  {len(records)}/{len(todo)} done")
+    return records
+
+
+def main() -> None:
+    """Command line entry point. Only the pilot exists so far (no full run yet)."""
+    parser = argparse.ArgumentParser(description="Stage 2: add units and cuisines with an LLM.")
+    parser.add_argument("--pilot", action="store_true", help="run the fixed-seed pilot sample")
+    parser.add_argument("--limit", type=int, default=PILOT_SIZE, help="recipes to run (default 200)")
+    args = parser.parse_args()
+    if not args.pilot:
+        parser.error("only --pilot is built so far; the full run needs the pilot checked first")
+
+    df = pd.read_parquet(SUBSET_PATH)
+    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
+    records = run_pilot(client, df, args.limit, PILOT_SEED, WORKERS)
+    if records:
+        print_report(records, total_recipes=len(df))
+
+
+if __name__ == "__main__":
+    main()
