@@ -23,7 +23,7 @@
 | CD: merge to main auto-deploys the endpoint | must | | |
 | Create Supabase and Neo4j free tier projects (dev only) | must | | |
 | Set billing alerts, check free tier limits for Supabase and Neo4j | must | | |
-| Pick recipe dataset (DECISIONS #8) | must | Andrew | audited, blocked on license and units (see DECISIONS #8) |
+| Pick recipe dataset (DECISIONS #8) | must | Andrew | proposed: Food.com 2020 with LLM-inferred units (DECISIONS #23), needs Paul's sign-off |
 
 **Done when:** a merge to main deploys a live endpoint.
 
@@ -32,7 +32,9 @@
 | Task | Tag | Owner | Status |
 |---|---|---|---|
 | First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | Paul | done (PR #13 merged): Alembic migrations for the 14 ER diagram tables (six core tables plus preferences, ratings, events) |
-| Create `raw` schema, load recipe dataset into it untouched | must | | |
+| Food.com stage 1: `clean.py` (clean, dedupe, size funnel) | must | Andrew | done: 212,846-recipe subset (DECISIONS #25) |
+| Food.com stage 2: `augment.py` (LLM units, quantities, cuisines) | must | Andrew | next: pilot of 200 recipes first |
+| Create `raw` schema, load the prepared Food.com data into it (source file stays local, DECISIONS #24) | must | | |
 | Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | | |
 | `pipeline_runs` log table | should | | |
 | Ingredient name normalization v1 | must | | |
@@ -69,3 +71,4 @@ _One line per change: date, what changed, why. Link a DECISIONS entry if one was
 - 2026-10-02: ELT with dbt added to week 2, FDA recalls pipeline added to week 4 (DECISIONS #14 to #16).
 - 2026-10-07: Chose GCP as cloud provider (DECISIONS #10); Terraform scaffold landed under `infra/`.
 - 2026-10-17: Switched Python dependencies from the proposed conda env (PR #7) and pinned requirements to uv with a lockfile (DECISIONS #22).
+- 2026-10-25: Recipe load changed to clean, then LLM augment, then dbt and upsert; the untouched source file stays local; subset set to 212,846 recipes (DECISIONS #23 to #25).

@@ -17,7 +17,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --locked --dev
+        run: uv sync --locked --dev --group pipelines
 
       - name: Lint
         run: uv run ruff check .

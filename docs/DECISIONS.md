@@ -60,7 +60,7 @@
 
 ### 8. Persistent recipe dataset
 - **Date:** 2026-10-02
-- **Status:** Open
+- **Status:** Open, proposed answer in #23
 - **Question:** Which open recipe dataset do we batch load? Candidates: Food.com (Kaggle), TheMealDB, others.
 - **Decide by:** End of week 1. Check license, size, and how clean the ingredient lists and instructions are.
 - **Update (2026-10-09):** Food.com (Kaggle) is the first candidate we're investigating. The dataset pages we checked list no license, and the data was scraped from Food.com for a research paper, so confirm the license before loading it. Fallbacks: TheMealDB (terms allow copying API content; free key covers development and education) and RecipeNLG (non-commercial research and education only). See #20.
@@ -161,3 +161,24 @@
 - **Decision:** Dependencies live in `pyproject.toml` (ranges, with a `dev` group) and are locked in `uv.lock`. Local dev uses uv (`uv sync`, `uv add`, `uv run`) and the Docker image installs with `uv sync --locked --no-dev`. Replaces the conda env plus `requirements.txt` plan in PR #7 (its proposed #21 is not used), and replaces main's pinned `requirements.txt` and `requirements-dev.txt`.
 - **Why:** Conda plus pip left two copies of the package list to keep in sync and had no lockfile, so sub-dependencies could still change between builds. Main's exact pins covered only the packages we named. One `pyproject.toml` plus a lockfile gives the same versions on a laptop, in CI, and in Docker, with one spec to edit. uv is also much faster than pip.
 - **Impact:** `Dockerfile` copies uv in and installs from the lock. New dependencies go in with `uv add`, and `pyproject.toml` and `uv.lock` are committed together. PR #7 is closed. Packages for the rest of the stack are added as each piece is built, with their decisions.
+
+### 23. Food.com 2020 as the recipe dataset, with LLM-inferred units
+- **Date:** 2026-10-25
+- **Status:** Proposed
+- **Decision:** Use the Food.com 2020 dataset (Kaggle `irkaal/foodcom-recipes-and-reviews`, `recipes.parquet`) as the persistent recipe store. Answers #8. The team accepts the licensing position for this project: the Kaggle labels are the uploaders' claims and Food.com's own terms were not reviewed. Revisit before any public or commercial release. The dataset has no ingredient units, so an LLM infers a quantity and unit for each ingredient from the recipe text.
+- **Why:** It is the largest candidate (523k recipes) with names, ingredients, steps, times, and categories (audit in #8). Its ingredient quantities line up with the ingredient list in only about 22% of recipes, and units are absent everywhere, so the text-reading step is needed either way. Alternatives (TheMealDB, RecipeNLG) were not audited for units or size.
+- **Impact:** `pipelines/foodcom/`. Inferred units carry model error, so we measure accuracy on a hand-checked sample before the full run. If the license position changes, the recipe store must be replaced.
+
+### 24. Food.com load pipeline design
+- **Date:** 2026-10-25
+- **Status:** Proposed
+- **Decision:** Recipes reach Postgres in stages: Python cleans the file (`clean.py`), an LLM adds units and cuisines (`augment.py`), the result loads into `raw.foodcom_prepared`, dbt builds staging models, and an upsert writes into the Alembic-owned `public` tables (#2). Amends #14: the untouched Food.com file is not stored in Postgres. It stays local at `data/raw/recipes.parquet`, re-downloadable from Kaggle and pinned by dataset version and SHA-256.
+- **Why:** Python handles text cleanup and LLM calls, and dbt handles SQL transforms and tests (#15). The full cleaned set is about 635 MB of data by our estimate, so a second untouched copy would not fit the free tier. LLM output is paid for, so it is written to a local file that a rerun resumes from.
+- **Impact:** `pipelines/foodcom/` and `dbt/`. `raw` holds prepared Food.com data, not the source file, so the "land untouched in `raw`" rule in #14 no longer holds for this source. The paid `augment_results.jsonl` must be backed up somewhere other than a laptop.
+
+### 25. Food.com subset: 212,846 recipes
+- **Date:** 2026-10-25
+- **Status:** Proposed
+- **Decision:** Load recipes with a total time of 90 minutes or less and 3 to 20 ingredients, excluding categories that are clearly not dinner (desserts, breads, drinks, breakfast, sauces, spreads, non-food), after removing empty recipes and duplicate names. This leaves 212,846 of 428,419 cleaned recipes. A rating is not required. The filters are named constants in `pipelines/foodcom/clean.py`.
+- **Why:** The app plans weeknight dinners, and the LLM step is paid per recipe, so we cut before paying. An include list of dinner categories missed vegetarian and cuisine-filed dinners, so we exclude the clearly-not-dinner groups instead. Half of all recipes are unrated, so a rating filter would drop many valid recipes. The 90-minute cutoff is a judgment call from the weeknight-dinner idea, not derived from the data. With the other filters fixed, the subset is 180,740 recipes at 60 minutes, 212,846 at 90, 222,269 at 120, and 232,064 at 180, so the count flattens above 90. Total time includes passive time such as marinating.
+- **Impact:** Our estimate is about 310 MB of data per copy. With a `raw` copy, indexes, and embeddings, this exceeds the 500 MB free tier, so we need a larger Supabase plan (a paid service, to be agreed before stage 3) or a single stored copy. Open until measured on a 1,000-recipe sample in stage 3.

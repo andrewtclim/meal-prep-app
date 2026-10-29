@@ -16,6 +16,10 @@ dev = [
     "ruff>=0.17.1",
     "alembic>=1.20.0",
 ]
+pipelines = [
+    "pandas>=3.1.0",
+    "pyarrow>=26.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
