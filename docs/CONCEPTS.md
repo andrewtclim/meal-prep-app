@@ -117,3 +117,52 @@
 - **Why this over the alternative:** One big dependency list would ship pandas to the production API image, which never reads Food.com data. The tradeoff is remembering the flag: without it, pipeline tests fail with "no module named pandas".
 - **Common question:** How do you keep a production image small when the repo also has data-processing code? Dependency groups, so each environment installs only its own.
 
+
+### Structured outputs and closed vocabularies
+- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 19 units. The guarantee is on the shape of the answer, not on whether the values are correct.
+- **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
+- **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
+- **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
+
+### Anchor and completeness check
+- **What it is:** The anchor is the list that every other field attaches to; here, the recipe's `ingredient_parts`, which the model answers one-for-one by position. Like a join key, it only works if it is complete: a missing row cannot be recovered downstream. A completeness check compares the anchor with an independent signal (here, the quantities list and the steps) on real rows before building on it.
+- **Where we use it:** The check found about three quarters of recipes have more quantities than names, and the steps use unlisted items such as oil. The fix is `extra_ingredients` in `build_output_schema` and `validate_result` in `pipelines/foodcom/augment.py` (DECISIONS #26 amendment).
+- **Why this over the alternative:** Trusting a column because it looks tidy is cheaper but silently drops data, and we would only notice after paying for the full run. A check on 15 rows plus a keyword count cost nothing. The tradeoff is that the keyword count is rough, so we still hand-check the model's extras.
+- **Common question:** How do you validate a dataset before building a pipeline on it? Compare each key column with an independent field on a sample, and measure the gap instead of assuming it.
+
+### Label granularity and near-neighbour confusion
+- **What it is:** How many classes a labeler has, and how finely they split. Too few and useful distinctions collapse into one label (filipino becomes `other`). Too many and near-neighbour labels (british and irish, szechuan and chinese) cover almost the same items, so the labeler picks between them almost at random and the data becomes inconsistent.
+- **Where we use it:** `CUISINES` and `MAX_CUISINES` in `pipelines/foodcom/augment.py` (90 labels, at most 2 per recipe). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
+- **Why this over the alternative:** A short list is cheaper and more consistent but loses filters users want. A very long list is expressive but costs input tokens on every call (about +677 per call here) and splits the same dishes across labels. The confusion is a risk we have not measured yet: repeat the same recipes twice and count differing labels, then look at a confusion matrix on a hand-labelled sample.
+- **Common question:** How do you decide how many classes to use? Trade specificity against consistency, check a confusion matrix, and merge labels the evaluator cannot separate.
+
+### Request dials: max_tokens, effort, thinking and temperature
+- **What it is:** The settings of one API call that change cost or behaviour without changing the prompt. `max_tokens` is a hard cap on output, and thinking tokens count toward it. `effort` sets how hard the model thinks. `thinking` can be left at the default or disabled. `temperature`, `top_p` and `top_k` control how random the word choice is, but the Anthropic API no longer accepts them: the Python SDK has no such argument, and the server returns 400 "Extra inputs are not permitted" (tested 2026-10-29).
+- **Where we use it:** `build_request_params` in `pipelines/foodcom/augment.py` takes `effort`, `thinking` and `max_tokens` (defaults: low, model default, 4096), and `augment_recipe` records `thinking_tokens` and `mode` per recipe.
+- **What we measured (5 messy recipes, about $0.03):** a cap of 300 cut off the JSON in all 5 first attempts, and 3 recipes failed after the retry; cost rose from $0.0039 to $0.0043 because the retry resends the whole input. Thinking was about 71% of output tokens. `medium` cost the same as `low`; `high` cost about 26% more. Three identical `low` runs differed in about a third of ingredient entries (15 to 17 of 47), and 4 of 5 recipes got a different cuisine set at least once. So answers on messy recipes are noisy, and a change of `effort` could not be told apart from that noise.
+- **Why this over the alternative:** A low `max_tokens` looks like a cost cap but is a false economy, because a cut-off answer is invalid and a retry pays the input twice. We keep the cap generous and control cost with `effort` and `thinking`. We cannot lower temperature to get repeatability, so consistency has to come from the schema, validator, closed lists and clear prompt rules, and we measure the rest.
+- **Common question:** What does temperature do, and how do you make an LLM pipeline repeatable without it? Temperature rescales the probabilities before sampling (0 is nearly always the top choice); without it you constrain the output space and measure the variance.
+
+### Baseline for evaluation
+- **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
+- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
+- **Why this over the alternative:** Without a baseline, "the model tagged 100% of recipes" sounds good but says nothing about whether it is right. The tradeoff is that the baseline's labels are biased toward recipes whose uploader added a cuisine tag, so agreement with it does not prove accuracy on the other 84%.
+- **Common question:** Why compare a model to a baseline? To show it adds value over something simple, and to separate "covers more" from "is more correct".
+
+### Append-only results file (resumable jobs)
+- **What it is:** Writing each finished result as one line to a file, flushed right away, and skipping already-finished keys on a rerun. A crash loses at most the call in flight.
+- **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `source_ref` (Food.com's own id).
+- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
+- **Common question:** How do you make a long, paid job safe to rerun? Save results as you go under a stable key, and skip keys already saved.
+
+### Environment file and .env.example
+- **What it is:** `.env` holds real secrets (API key, database URL) and is git-ignored. `.env.example` lists the same variable names with empty values and is committed, so a new clone knows what to fill in.
+- **Where we use it:** `.env.example` at the repo root; `uv run --env-file .env ...` loads `.env` for a run.
+- **Why this over the alternative:** Putting keys in code or committing `.env` leaks them into git history, which is permanent. Having no template means the next person finds the missing variables by crashing. The tradeoff is keeping the template in step with the variables the code reads.
+- **Common question:** How do you manage secrets in a repo? Keep them out of git, document the names in a template, and inject real values at run time.
+
+### LLM cost: input, output, thinking and batching
+- **What it is:** LLM calls are billed per token, with output priced higher than input (5 times for Claude Haiku 5.5: $0.10 vs $0.50 per million tokens, from the model price table cached 2026-10-06). Models that "think" before answering also bill those thinking tokens as output. The Message Batches API runs requests asynchronously (usually within an hour) at half price.
+- **Where we use it:** `estimate_cost` and `print_report` in `pipelines/foodcom/augment.py` project the cost of the full run from measured tokens per recipe. The Batches API is planned for the full run, not built yet.
+- **Why this over the alternative:** Estimating cost from the text length alone was off by about 2 times in our 3-recipe test (about 1,570 input and 700 output tokens per recipe, against our guess of 800 and 350). The cause was thinking tokens: a raw response reported 589 thinking tokens out of 910 output tokens, and across the 200-recipe pilot about 80% of output was not the answer. Measuring on a pilot before a large run avoids a surprise bill.
+- **Common question:** How do you estimate and control the cost of an LLM pipeline? Measure real tokens per item on a small sample, project to the full size, and use batching for work that is not interactive.
