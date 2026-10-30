@@ -75,5 +75,31 @@ One job, named `lint-and-test`, on GitHub's current Ubuntu image. `checkout` cop
 - DECISIONS #22: uv, with a dev group and `uv sync --locked --no-dev` in Docker
 - CONCEPTS: [uv](../docs/CONCEPTS.md#uv), [GitHub Actions CI](../docs/CONCEPTS.md#github-actions-ci)
 
-## What we'd explain differently next time
-Optional: fill in after the workflow runs on a PR.
+## Session: 2026-10-21 (evening) — broken lockfile blocked the merge
+### What we worked on and why
+Andrew approved PR #14, then the merge button failed. PR #13 had landed on `main` while this branch was open. Updating the branch merged two copies of `uv.lock` into one invalid file: the `ruff` package entry was never closed before `sqlalchemy` started. GitHub's check stopped at `uv sync --locked --dev` ("Install dependencies"). Ruff and pytest never ran. `uv lock` could not repair it, because uv reads the existing lockfile first and refused to parse it. Deleting `uv.lock` and running `uv lock` again rebuilt it from `pyproject.toml`, which already listed both Ruff and Alembic.
+
+### Decisions and concepts
+- CONCEPTS: [Lockfile](../docs/CONCEPTS.md#lockfile). `--locked` is what made CI fail instead of silently installing a different set.
+
+## Session: 2026-10-24 — where the Kaggle parquet lives
+### What we worked on and why
+Talked through the database layout before any recipe load. The Food.com candidate is a parquet file from Kaggle. Postgres does not open that file. The file stays on disk, and a loader copies rows into Supabase.
+
+```mermaid
+flowchart LR
+  File["Parquet on the laptop, GCS later"] --> Raw["Supabase schema raw"]
+  Raw --> Clean["Supabase schema public, the ER tables"]
+  Clean --> Neo["Neo4j Aura"]
+  Api["Cloud Run API"] --> Clean
+  Api --> Neo
+```
+
+`raw` matches the parquet columns. dbt reads `raw` and writes the ER tables Alembic already created. User rows (pantry, ratings) are inserted by the app and never come from the file. Neo4j is rebuilt from the clean tables. Cloud Run runs the API and holds no recipe rows.
+
+The free tier is about 500 MB, and storing both the raw copy and the clean tables counts against that. The loader should filter to the weeknight subset before insert. If both copies still do not fit, the parquet file itself would stay the raw layer and only clean rows would go to Supabase. That would be a new decision, because [DECISIONS #14](../docs/DECISIONS.md) says the raw copy lives in Postgres. Nothing is loaded yet: [DECISIONS #8](../docs/DECISIONS.md) is still open.
+
+### Decisions and concepts
+- DECISIONS #4: Supabase is the system of record, Neo4j is rebuilt from it
+- DECISIONS #14: raw schema, then transforms
+- DECISIONS #8: license and the 500 MB subset, still open
