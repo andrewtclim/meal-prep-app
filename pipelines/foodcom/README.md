@@ -61,7 +61,7 @@ Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subs
 1. `build_user_message` turns the recipe row into numbered text.
 2. `build_request_params` adds the rules (`SYSTEM_PROMPT`) and the answer shape (`build_output_schema`).
 3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], extra_ingredients: [{name, quantity, unit}], cuisines: [...]}`.
-4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", 1 to 3 cuisines, and for extras: at most 6, no salt or water, no repeat of a listed name).
+4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", 1 to 2 cuisines, and for extras: at most 6, no salt or water, no repeat of a listed name).
 5. On a problem, one retry names the problems. Then the result line is saved.
 
 ### The ingredient list is not complete (2026-10-29)
@@ -79,10 +79,11 @@ A 5-recipe test on the new schema ($0.0035) passed validation on the first try a
 
 ### The fixed lists
 - **Units (19):** g, kg, ml, l, tsp, tbsp, cup, fl_oz, oz, lb, piece, clove, slice, can, package, bunch, pinch, dash, to_taste.
-- **Cuisines (20):** american, italian, mexican, chinese, indian, thai, japanese, korean, vietnamese, greek, mediterranean, middle_eastern, french, spanish, german, british_irish, caribbean, african, cajun_creole, other.
+- **Cuisines (90, at most 2 per recipe):** Food.com's own cuisine tags plus the ones it lacks (italian, french, american, british, irish, mediterranean...), grouped by region in `CUISINES`. Merged on purpose: scottish and welsh into british, szechuan and hunan into chinese, lebanese and turkish into middle_eastern. A region may pair with its parent (chinese, cantonese). Umbrella labels (african, middle_eastern, scandinavian, south_american...) catch countries we did not list, and `other` is the last resort (DECISIONS #26 amendment). The earlier 20-cuisine run in the sections below used the old list.
+- **Near-neighbour risk:** labels that cover almost the same food (british and irish, italian and mediterranean) can make the model inconsistent. This is not measured yet; the repeatability run and the hand check will show which pairs to merge.
 
 ### The cuisine baseline
-`baseline_cuisines` maps Food.com's own keyword and category tags to our cuisines, with no model. It labels 33,945 of the 212,846 recipes (15.9%) and returns nothing for the other 84.1%. It cannot say italian, french, mediterranean or british_irish for most recipes, because no tag in the data names them. It is the floor the model must beat, and a rough check of the model on the recipes it covers.
+`baseline_cuisines` maps Food.com's own keyword and category tags to our cuisines, with no model. With the 90-cuisine list it labels 42,758 of the 212,846 recipes (20.1%; it was 33,945, 15.9%, with 20 cuisines) and returns nothing for the other 79.9%. It cannot say italian, french, american (except via one tag), british, irish or mediterranean for most recipes, because no tag in the data names them. `canadian` (3,103) and `australian` (2,250) rank high and may be where-posted tags, not food styles, so do not trust it on those two. It is the floor the model must beat, and a rough check of the model on the recipes it covers.
 
 ### 3-recipe test (2026-10-27)
 Three recipes (seed 42, so the same ones every time), all valid on the first try:
@@ -132,4 +133,4 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 37 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 40 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.

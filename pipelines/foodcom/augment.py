@@ -50,46 +50,75 @@ UNITS = [
     "to_taste",
 ]  # fmt: skip
 
-# Cuisines a weeknight-dinner app would filter on. Multi-label: a recipe can be
-# both "mexican" and "american". "other" is the escape hatch so the model is never
-# forced to pick a wrong cuisine just to fill the field.
+# Cuisines a weeknight-dinner app would filter on, 90 in all (DECISIONS #26).
+# Multi-label: a recipe can be "mexican" and "american", or a parent and its
+# member ("chinese", "cantonese"). "other" is the escape hatch so the model is
+# never forced to pick a wrong cuisine just to fill the field. A few umbrella
+# labels (african, middle_eastern, scandinavian, mediterranean, caribbean,
+# south_american) catch countries we did not list. Near-duplicates were merged
+# on purpose (scottish/welsh into british, szechuan/hunan into chinese) because
+# the model cannot reliably tell them apart. Grouped by region for reading only.
 CUISINES = [
-    "american", "italian", "mexican", "chinese", "indian", "thai", "japanese",
-    "korean", "vietnamese", "greek", "mediterranean", "middle_eastern",
-    "french", "spanish", "german", "british_irish", "caribbean", "african",
-    "cajun_creole", "other",
+    # Americas
+    "american", "tex_mex", "cajun_creole", "hawaiian", "native_american",
+    "pennsylvania_dutch", "canadian", "mexican", "caribbean", "cuban",
+    "puerto_rican", "jamaican", "haitian", "brazilian", "peruvian", "argentine",
+    "chilean", "colombian", "venezuelan", "ecuadorian", "costa_rican",
+    "guatemalan", "south_american",
+    # Europe
+    "italian", "french", "spanish", "portuguese", "greek", "mediterranean",
+    "german", "austrian", "swiss", "dutch", "belgian", "british", "irish",
+    "scandinavian", "swedish", "norwegian", "danish", "finnish", "icelandic",
+    "russian", "polish", "hungarian", "czech", "ukrainian", "romanian",
+    "bulgarian", "serbian", "croatian", "georgian",
+    # Middle East and Africa
+    "middle_eastern", "israeli", "palestinian", "iraqi", "iranian", "egyptian",
+    "syrian", "african", "moroccan", "tunisian", "ethiopian", "nigerian",
+    "south_african",
+    # Asia and Pacific
+    "chinese", "cantonese", "taiwanese", "japanese", "korean", "thai",
+    "vietnamese", "filipino", "indonesian", "malaysian", "singaporean",
+    "cambodian", "burmese", "indian", "pakistani", "bangladeshi", "sri_lankan",
+    "nepalese", "tibetan", "mongolian", "afghan", "australian", "new_zealand",
+    "polynesian",
+    "other",
 ]  # fmt: skip
 
-MAX_CUISINES = 3
+# Two is enough: in the 200-recipe pilot 97 recipes used two cuisines and only 3
+# used a third. Fewer slots also leaves less room for a filler second tag.
+MAX_CUISINES = 2
 MAX_EXTRA_INGREDIENTS = 6  # cap on ingredients the model may add beyond the source list
 EXTRA_BANNED_NAMES = {"salt", "water"}  # often unlisted on purpose, so never an "extra"
 
 # Rule-based cuisine baseline: Food.com keyword or category (lowercased) -> our
 # cuisine. Only words that name a specific cuisine are mapped. "european" and
 # "asian" are left out on purpose: they cover tens of thousands of recipes of
-# every kind, so mapping them would add noise, not signal. There is no keyword
-# at all for italian, french, american, irish or mediterranean, so this table
-# cannot produce those; only the LLM can.
-CUISINE_KEYWORDS = {
-    "mexican": "mexican", "tex mex": "mexican",
+# every kind, so mapping them would add noise, not signal; "kosher" is a diet,
+# not a cuisine. There is no keyword at all for italian, french, american,
+# irish, mediterranean or israeli, so this table cannot produce those; only the
+# LLM can.
+_SAME_NAME_TAGS = (
+    "mexican", "chinese", "cantonese", "indian", "pakistani", "thai", "japanese",
+    "korean", "vietnamese", "filipino", "indonesian", "malaysian", "cambodian",
+    "nepalese", "mongolian", "australian", "new zealand", "polynesian", "hawaiian",
+    "greek", "spanish", "german", "portuguese", "swiss", "dutch", "belgian",
+    "austrian", "swedish", "norwegian", "danish", "finnish", "icelandic",
+    "scandinavian", "russian", "polish", "hungarian", "czech", "georgian",
+    "caribbean", "cuban", "puerto rican", "brazilian", "peruvian", "chilean",
+    "colombian", "venezuelan", "costa rican", "guatemalan", "south american",
+    "native american", "pennsylvania dutch", "canadian", "african",
+    "south african", "moroccan", "ethiopian", "nigerian", "egyptian", "iraqi",
+    "palestinian",
+)  # fmt: skip
+CUISINE_KEYWORDS = {tag: tag.replace(" ", "_") for tag in _SAME_NAME_TAGS} | {
+    "tex mex": "tex_mex",
     "southwestern u.s.": "american",
-    "chinese": "chinese",
-    "indian": "indian", "pakistani": "indian",
-    "thai": "thai",
-    "japanese": "japanese",
-    "korean": "korean",
-    "vietnamese": "vietnamese",
-    "filipino": "other", "indonesian": "other", "south american": "other",
-    "greek": "greek",
-    "spanish": "spanish",
-    "german": "german",
-    "scottish": "british_irish",
-    "caribbean": "caribbean",
+    "szechuan": "chinese", "hunan": "chinese",
+    "scottish": "british", "welsh": "british",
     "cajun": "cajun_creole", "creole": "cajun_creole",
-    "african": "african", "south african": "african",
-    "moroccan": "african", "ethiopian": "african",
     "lebanese": "middle_eastern", "turkish": "middle_eastern",
     "southwest asia (middle east)": "middle_eastern",
+    "ecuadorean": "ecuadorian",
 }  # fmt: skip
 
 
@@ -177,7 +206,12 @@ Rules:
   * At most {MAX_EXTRA_INGREDIENTS} extras. Return an empty array if nothing is missing.
   * Same quantity and unit rules as above, including to_taste with null.
 - cuisines: list up to {MAX_CUISINES} cuisines that best describe the dish, most
-  fitting first. Use "other" only if none fit.
+  fitting first. Pick the most specific one you are confident in. A country or
+  region may be paired with its parent (chinese with cantonese), but do not list
+  two overlapping labels just to fill the second slot. For a country that is
+  not listed, use the closest umbrella label (african, middle_eastern,
+  south_american, scandinavian, caribbean) and use "other" only if none fit.
+  Do not use "american" as a default when the dish has no clear cuisine.
 """
 
 

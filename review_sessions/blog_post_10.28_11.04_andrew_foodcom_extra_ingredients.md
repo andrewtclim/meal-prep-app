@@ -1,7 +1,7 @@
 # Week of 10.28 to 11.04: Fixing the incomplete ingredient list in the Food.com augment step (Andrew)
 
 ## Summary
-After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. This week is the fix, its tests and docs. Next come a wider cuisine list, parameter experiments, and a 20-recipe comparison of thinking on and off.
+After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. Next come parameter experiments and a 20-recipe comparison of thinking on and off.
 
 ## PRs this week
 | PR | What it did | State |
@@ -62,6 +62,22 @@ The schema can only guarantee shape. The cap, the no-repeat rule and the salt/wa
 - DECISIONS #26 amendment (still Proposed): the finding, the six rules for extras, the tradeoffs. Paul has not signed off yet.
 - CONCEPTS: [Anchor and completeness check](../docs/CONCEPTS.md#anchor-and-completeness-check)
 - DATA_MODEL: `recipe_ingredient` will hold listed and extra rows with a proposed `is_extra` flag.
+
+### Cuisines: 20 to 90 labels, at most 2 per recipe
+Paul and I wanted something close to the 75 to 100 most common cuisines. We scanned Food.com's own tags (64 cuisine and region words exist, most with a few hundred recipes) and added the ones it lacks: italian, french, american, british, irish, mediterranean, israeli and others. `kosher` is a diet and `european`/`asian` are too coarse, so they are out. We merged near-duplicates the model cannot reliably separate (scottish and welsh into british, szechuan and hunan into chinese, lebanese and turkish into middle_eastern), but kept `cantonese`, and kept `italian` and `mediterranean` apart because the model sees the dish name and steps. The cap went from 3 to 2: in the pilot 97 of 200 recipes used two cuisines and only 3 used a third.
+
+`pipelines/foodcom/augment.py`
+```python
+MAX_CUISINES = 2
+CUISINE_KEYWORDS = {tag: tag.replace(" ", "_") for tag in _SAME_NAME_TAGS} | {
+    "scottish": "british", "welsh": "british", "szechuan": "chinese", ...
+}
+```
+Most Food.com tags now map to the same-named cuisine, so the baseline table is built from a list of names plus a handful of folded or renamed ones instead of 90 hand-typed pairs. Baseline coverage rose from 15.9% to 20.1% of the subset.
+
+**API test.** The API accepted the 90-value schema (2 recipes, $0.0013). Input rose by exactly 677 tokens per call on both recipes, which is about +$14 direct or +$7 batch over 212,846 recipes. Two recipes also changed behaviour: Joe's onions went from `american` to `other`, and the spinach triangles from `greek, mediterranean` to `greek`. That is two recipes, an observation and not a measurement.
+
+**The risk we have not measured:** near-neighbour confusion (labels covering almost the same food). The repeatability run and the hand check come next. CONCEPTS: [Label granularity and near-neighbour confusion](../docs/CONCEPTS.md#label-granularity-and-near-neighbour-confusion). DECISIONS #26 has a second amendment for this.
 
 ## What we'd explain differently next time
 I wrote "the ingredient list is the anchor" as a design assumption while already holding the stage 1 number that only 22% of lists match the quantities, and did not ask what the extras were. The check cost nothing and took minutes. The habit to keep: when a join key looks tidy, compare it with a second signal on a sample before building on it.

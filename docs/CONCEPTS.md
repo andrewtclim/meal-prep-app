@@ -130,9 +130,15 @@
 - **Why this over the alternative:** Trusting a column because it looks tidy is cheaper but silently drops data, and we would only notice after paying for the full run. A check on 15 rows plus a keyword count cost nothing. The tradeoff is that the keyword count is rough, so we still hand-check the model's extras.
 - **Common question:** How do you validate a dataset before building a pipeline on it? Compare each key column with an independent field on a sample, and measure the gap instead of assuming it.
 
+### Label granularity and near-neighbour confusion
+- **What it is:** How many classes a labeler has, and how finely they split. Too few and useful distinctions collapse into one label (filipino becomes `other`). Too many and near-neighbour labels (british and irish, szechuan and chinese) cover almost the same items, so the labeler picks between them almost at random and the data becomes inconsistent.
+- **Where we use it:** `CUISINES` and `MAX_CUISINES` in `pipelines/foodcom/augment.py` (90 labels, at most 2 per recipe). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
+- **Why this over the alternative:** A short list is cheaper and more consistent but loses filters users want. A very long list is expressive but costs input tokens on every call (about +677 per call here) and splits the same dishes across labels. The confusion is a risk we have not measured yet: repeat the same recipes twice and count differing labels, then look at a confusion matrix on a hand-labelled sample.
+- **Common question:** How do you decide how many classes to use? Trade specificity against consistency, check a confusion matrix, and merge labels the evaluator cannot separate.
+
 ### Baseline for evaluation
 - **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
-- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 15.9% of the subset. It has no way to say "italian", because no tag in the data does.
+- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
 - **Why this over the alternative:** Without a baseline, "the model tagged 100% of recipes" sounds good but says nothing about whether it is right. The tradeoff is that the baseline's labels are biased toward recipes whose uploader added a cuisine tag, so agreement with it does not prove accuracy on the other 84%.
 - **Common question:** Why compare a model to a baseline? To show it adds value over something simple, and to separate "covers more" from "is more correct".
 

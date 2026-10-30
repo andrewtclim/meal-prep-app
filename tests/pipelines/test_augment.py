@@ -203,7 +203,25 @@ def test_baseline_ignores_coarse_words_and_missing_values():
 
 def test_baseline_caps_at_max_cuisines():
     keywords = ["Mexican", "Thai", "Greek", "Korean"]
-    assert baseline_cuisines(keywords, None) == ["mexican", "thai", "greek"]
+    assert baseline_cuisines(keywords, None) == ["mexican", "thai"]
+
+
+def test_baseline_maps_merged_and_renamed_tags():
+    # tags we deliberately fold into a broader label, or spell differently
+    assert baseline_cuisines(["Scottish"], None) == ["british"]
+    assert baseline_cuisines(["Szechuan"], "Hunan") == ["chinese"]
+    assert baseline_cuisines(["Tex Mex"], None) == ["tex_mex"]
+    assert baseline_cuisines(["Ecuadorean"], None) == ["ecuadorian"]
+
+
+def test_baseline_keeps_same_name_tags_with_underscores():
+    assert baseline_cuisines(["Puerto Rican"], None) == ["puerto_rican"]
+    assert baseline_cuisines([], "South African") == ["south_african"]
+
+
+def test_cuisine_list_is_wide_and_has_the_cuisines_food_com_lacks():
+    assert 85 <= len(CUISINES) <= 100
+    assert {"italian", "french", "american", "british", "irish", "filipino"} <= set(CUISINES)
 
 
 # --- Block 3: request, retry, resume (no network: a fake client stands in) ---
