@@ -325,8 +325,10 @@ def add_recipe_key(df: pd.DataFrame) -> pd.DataFrame:
     """Add recipe_key: a sequential id 1..N, ordered by source_ref.
 
     Why a second id: source_ref is Food.com's (stable, but gappy). recipe_key
-    is ours, for tracking rows through the pipeline. Postgres assigns the real
-    recipe_id in stage 3. Call after dedupe so the numbers have no holes.
+    is ours, for reading and joining within one run. It is a POSITION: if a
+    stage 1 change drops or adds a recipe, the numbers shift. Never use it as a
+    stored identity (saved LLM results are keyed on source_ref). Postgres assigns
+    the real recipe_id in stage 3. Call after dedupe so the numbers have no holes.
     """
     df = df.sort_values("source_ref").reset_index(drop=True)
     df.insert(0, "recipe_key", range(1, len(df) + 1))

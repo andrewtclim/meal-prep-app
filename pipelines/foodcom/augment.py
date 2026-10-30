@@ -13,6 +13,7 @@ validator. No API call happens here, so it is free to test.
 
 import argparse
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -22,6 +23,8 @@ import pandas as pd
 from pipelines.foodcom.clean import SUBSET_PATH
 
 RESULTS_PATH = Path("data/interim/augment_results.jsonl")
+# Committed on purpose: the thinking comparison is small and is reviewed in the PR.
+PILOT_DIR = Path("pipelines/foodcom/pilot")
 
 # Cheapest current model; the pilot's accuracy check decides if it is good enough.
 MODEL = "claude-haiku-5-5"
@@ -38,6 +41,11 @@ THINKING_OFF = {"type": "disabled"}  # pass as thinking= to skip thinking tokens
 
 PILOT_SIZE = 200
 PILOT_SEED = 42
+# The thinking-versus-no-thinking comparison uses 20 recipes, split by how the raw
+# quantities relate to the ingredient names. A random 20 would be about 15 "more",
+# 4 "equal" and 1 "fewer", too few of the rare kinds to compare modes on.
+COMPARE_QUOTAS = {"equal": 7, "more": 10, "fewer": 3}
+COMPARE_SEED = 2026  # not 7: that seed drew the rows we inspected while writing the prompt
 WORKERS = 8  # concurrent requests; the SDK retries rate-limit errors itself
 
 # Closed vocabularies. The model may only pick from these, so downstream code can
@@ -290,20 +298,27 @@ def validate_result(result: dict, n_ingredients: int, listed_names=()) -> list[s
     for e in entries:
         problems += quantity_problems(f"position {e.get('position')}", e.get("quantity"), e.get("unit"))
 
-    # Exact (case-insensitive) match only. Fuzzy matching ("garlic" vs "garlic
-    # cloves") would need a normalizer we do not have yet; a miss here only means
-    # a near-duplicate reaches the hand check.
+    # An extra repeats a listed ingredient if it matches exactly, or if it is the
+    # listed name followed by a descriptor after a comma, bracket or dash
+    # ("cheddar cheese, shredded (for topping)" vs "cheddar cheese"). A different
+    # food that merely contains the word ("peanut butter" vs "butter") or is
+    # shorter ("onion" vs "spring onion") is a new ingredient and is kept.
     extras = result.get("extra_ingredients", [])
     if len(extras) > MAX_EXTRA_INGREDIENTS:
         problems.append(f"at most {MAX_EXTRA_INGREDIENTS} extra_ingredients; got {len(extras)}")
     taken = {str(name).strip().lower() for name in listed_names}
+    descriptor = [
+        re.compile(rf"{re.escape(str(n).strip().lower())}\s*[,(\-\u2013:;/]")
+        for n in listed_names
+        if str(n).strip()
+    ]
     for e in extras:
         name = str(e.get("name", "")).strip().lower()
         if not name:
             problems.append("extra_ingredients: name must not be empty")
         elif name in EXTRA_BANNED_NAMES:
             problems.append(f"extra '{name}': do not add salt or water")
-        elif name in taken:
+        elif name in taken or any(rx.match(name) for rx in descriptor):
             problems.append(f"extra '{name}': already in the ingredient list or listed twice")
         taken.add(name)
         problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
@@ -402,7 +417,9 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
 
     Inputs: an API client, a recipe dict, and optional request dials passed
     straight to `build_request_params` (effort, thinking, max_tokens). Output: one result record (the line we
-    store): recipe_key, status "ok" or "failed", the answer, any remaining problems,
+    store): source_ref (Food.com's id, the key results are matched on), recipe_key
+    (our position number, kept for reading only), status "ok" or "failed", the
+    answer, any remaining problems,
     attempts, and token counts summed over both attempts so cost is never
     under-reported. Two attempts is the cap: a second failure usually means a
     recipe the model cannot handle, and a third paid try rarely fixes it.
@@ -427,7 +444,11 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
         if not problems:
             break
     return {
-        "recipe_key": recipe["recipe_key"],
+        # source_ref identifies the recipe across reruns. recipe_key is a position
+        # number from clean.py and shifts if stage 1 drops or adds a recipe, so a
+        # saved result must never be matched on it.
+        "source_ref": int(recipe["source_ref"]),
+        "recipe_key": int(recipe["recipe_key"]),
         "status": "failed" if problems else "ok",
         "attempts": attempt,
         "result": answer,
@@ -441,16 +462,17 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
 
 
 def load_done_keys(path: Path) -> set[str]:
-    """Return the recipe_keys already stored with status "ok" (empty if no file).
+    """Return the source_refs already stored with status "ok" (empty if no file).
 
     This is what makes a rerun safe: those recipes were already paid for, so they
-    are skipped. Failed records are not counted as done, so a rerun retries them.
+    are skipped. Keyed on Food.com's source_ref, which does not change when stage 1
+    is edited, unlike the position-based recipe_key. Failed records are not counted as done, so a rerun retries them.
     """
     if not path.exists():
         return set()
     with path.open() as f:
         records = (json.loads(line) for line in f if line.strip())
-        return {r["recipe_key"] for r in records if r["status"] == "ok"}
+        return {r["source_ref"] for r in records if r["status"] == "ok"}
 
 
 def append_record(path: Path, record: dict) -> None:
@@ -488,48 +510,150 @@ def print_report(records: list[dict], total_recipes: int) -> None:
     print(f"  Batches API : ${estimate_cost(full_in, full_out, batch=True):,.2f}")
 
 
-def run_pilot(client, df: pd.DataFrame, n: int, seed: int, workers: int) -> list[dict]:
-    """Run the model on a fixed random sample, skipping recipes already stored.
+def quantity_group(n_ingredients: int, n_quantities: int) -> str:
+    """Name how a recipe's raw quantities compare with its ingredient names.
 
-    The sample is drawn first and the finished keys removed afterwards, so the
-    same seed always means the same recipes and a rerun only pays for the gap.
-    Workers call the API concurrently, but only this thread writes the file, so
-    lines cannot interleave. A failed API call is reported and left unwritten, so
-    the next run retries it.
+    Returns "equal", "more" (extra quantities with no name) or "fewer". This is the
+    split behind the stratified sample, because the model's job is easiest when
+    the lists line up and hardest when they do not.
     """
-    sample = df.sample(n=min(n, len(df)), random_state=seed)
-    done = load_done_keys(RESULTS_PATH)
-    todo = [row.to_dict() for _, row in sample.iterrows() if row["recipe_key"] not in done]
-    print(f"sample {len(sample)}, already done {len(sample) - len(todo)}, to run {len(todo)}")
+    if n_quantities == n_ingredients:
+        return "equal"
+    return "more" if n_quantities > n_ingredients else "fewer"
+
+
+def stratified_sample(df: pd.DataFrame, quotas: dict[str, int], seed: int) -> pd.DataFrame:
+    """Pick a fixed number of recipes from each quantity group, reproducibly.
+
+    Inputs: the recipes, how many to take per group (see COMPARE_QUOTAS), and a
+    seed. Output: the chosen rows, ordered group by group. The same seed gives the
+    same rows, which is what lets both modes of the comparison see identical
+    recipes. Raises ValueError if a group has fewer recipes than its quota, so a
+    short sample never passes silently.
+    """
+    groups = pd.Series(
+        [
+            quantity_group(len(parts), len(quantities))
+            for parts, quantities in zip(df["ingredient_parts"], df["quantities_raw"])
+        ],
+        index=df.index,
+    )
+    chosen = []
+    for group, quota in quotas.items():
+        members = df[groups == group]
+        if len(members) < quota:
+            raise ValueError(f"group '{group}' has {len(members)} recipes, need {quota}")
+        chosen.append(members.sample(n=quota, random_state=seed))
+    return pd.concat(chosen)
+
+
+def run_recipes(
+    client, recipes: list[dict], results_path: Path, workers: int, **request_options
+) -> list[dict]:
+    """Run the model on these recipes, skipping any already stored in results_path.
+
+    Inputs: an API client, the recipe dicts, the file to append to, a worker count,
+    and request dials passed to `augment_recipe` (effort, thinking, max_tokens).
+    Output: the new records. The finished keys are removed after the list is
+    chosen, so the same recipes always mean the same work and a rerun only pays for
+    the gap. Workers call the API concurrently, but only this thread writes the
+    file, so lines cannot interleave. A failed API call is reported and left
+    unwritten, so the next run retries it.
+    """
+    done = load_done_keys(results_path)
+    todo = [r for r in recipes if int(r["source_ref"]) not in done]
+    print(f"recipes {len(recipes)}, already done {len(recipes) - len(todo)}, to run {len(todo)}")
 
     records = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(augment_recipe, client, recipe): recipe for recipe in todo}
+        futures = {pool.submit(augment_recipe, client, r, **request_options): r for r in todo}
         for future in as_completed(futures):
             try:
                 record = future.result()
             except anthropic.APIError as error:
-                print(f"API error on {futures[future]['recipe_key']}: {error}")
+                print(f"API error on source_ref {futures[future]['source_ref']}: {error}")
                 continue
-            append_record(RESULTS_PATH, record)
+            append_record(results_path, record)
             records.append(record)
             if len(records) % 25 == 0:
                 print(f"  {len(records)}/{len(todo)} done")
     return records
 
 
+def run_pilot(client, df: pd.DataFrame, n: int, seed: int, workers: int) -> list[dict]:
+    """Run the model on a fixed random sample of n recipes (the 200-recipe pilot).
+
+    The sample is drawn with a fixed seed, so the same seed means the same recipes.
+    """
+    sample = df.sample(n=min(n, len(df)), random_state=seed)
+    recipes = [row.to_dict() for _, row in sample.iterrows()]
+    return run_recipes(client, recipes, RESULTS_PATH, workers)
+
+
+def stage1_snapshot(row: dict) -> dict:
+    """Turn one stage 1 row into plain JSON types, keeping only what a reviewer needs.
+
+    Inputs: a recipe row (lists may be numpy arrays, numbers may be missing).
+    Output: a dict of Python lists, strings and numbers, with missing values as
+    None. This is what gets committed next to the pilot results, so the notebook can
+    show the source recipe without the 212,846-row parquet file.
+    """
+
+    def plain(value):
+        if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
+            return [str(item) for item in list(value)]
+        return None if pd.isna(value) else value
+
+    keys = [
+        "recipe_key", "source_ref", "name", "recipe_category", "keywords",
+        "ingredient_parts", "quantities_raw", "quantities_aligned",
+        "recipe_servings", "recipe_yield", "instructions",
+    ]  # fmt: skip
+    snapshot = {key: plain(row[key]) for key in keys}
+    snapshot["quantities_aligned"] = bool(row["quantities_aligned"])
+    snapshot["group"] = quantity_group(len(row["ingredient_parts"]), len(row["quantities_raw"]))
+    return snapshot
+
+
+def run_compare(client, df: pd.DataFrame, mode: str, workers: int) -> list[dict]:
+    """Run the 20-recipe stratified sample in one mode: "thinking" or "nothinking".
+
+    Both modes draw the same recipes (fixed seed, fixed quotas) and differ only in
+    the `thinking` dial, so a gap in cost or answers comes from thinking and not
+    from the recipes. Each mode has its own results file because resume is keyed
+    by source_ref alone and would otherwise mix them. The stage 1 rows are saved
+    once for the review notebook.
+    """
+    sample = stratified_sample(df, COMPARE_QUOTAS, COMPARE_SEED)
+    recipes = [row.to_dict() for _, row in sample.iterrows()]
+    PILOT_DIR.mkdir(parents=True, exist_ok=True)
+    (PILOT_DIR / "stage1_rows.json").write_text(
+        json.dumps([stage1_snapshot(r) for r in recipes], indent=2, ensure_ascii=False) + "\n"
+    )
+    options = {"thinking": THINKING_OFF} if mode == "nothinking" else {}
+    return run_recipes(client, recipes, PILOT_DIR / f"results_{mode}.jsonl", workers, **options)
+
+
 def main() -> None:
-    """Command line entry point. Only the pilot exists so far (no full run yet)."""
+    """Command line entry point. Only the pilots exist so far (no full run yet)."""
     parser = argparse.ArgumentParser(description="Stage 2: add units and cuisines with an LLM.")
     parser.add_argument("--pilot", action="store_true", help="run the fixed-seed pilot sample")
     parser.add_argument("--limit", type=int, default=PILOT_SIZE, help="recipes to run (default 200)")
+    parser.add_argument(
+        "--compare",
+        choices=["thinking", "nothinking"],
+        help="run the stratified 20-recipe comparison sample in one mode",
+    )
     args = parser.parse_args()
-    if not args.pilot:
-        parser.error("only --pilot is built so far; the full run needs the pilot checked first")
+    if not args.pilot and not args.compare:
+        parser.error("only --pilot and --compare are built so far; the full run is not")
 
     df = pd.read_parquet(SUBSET_PATH)
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
-    records = run_pilot(client, df, args.limit, PILOT_SEED, WORKERS)
+    if args.compare:
+        records = run_compare(client, df, args.compare, WORKERS)
+    else:
+        records = run_pilot(client, df, args.limit, PILOT_SEED, WORKERS)
     if records:
         print_report(records, total_recipes=len(df))
 

@@ -1,8 +1,11 @@
 import json
 from types import SimpleNamespace
 
+import numpy as np
+import pandas as pd
 import pytest
 
+import pipelines.foodcom.augment as augment_module
 from pipelines.foodcom.augment import (
     CUISINE_KEYWORDS,
     CUISINES,
@@ -21,12 +24,19 @@ from pipelines.foodcom.augment import (
     estimate_cost,
     load_done_keys,
     parse_answer,
+    quantity_group,
+    run_compare,
+    run_recipes,
+    stage1_snapshot,
+    stratified_sample,
     validate_result,
 )
 
 
 def make_recipe(**overrides):
     recipe = {
+        "source_ref": 9001,
+        "recipe_key": 1,
         "name": "Egg Salad",
         "recipe_servings": 6,
         "recipe_yield": "6 sandwiches",
@@ -162,6 +172,26 @@ def test_extra_repeating_a_listed_name_is_caught_ignoring_case():
     assert any("already" in p for p in validate_result(result, 3, LISTED))
 
 
+def test_extra_that_contains_a_listed_name_is_caught():
+    # the corn bake case: "cheddar cheese, shredded (for topping)" next to "cheddar cheese"
+    result = make_result(extra_ingredients=[make_extra(name="Eggs, beaten (for brushing)")])
+    assert any("already" in p for p in validate_result(result, 3, LISTED))
+
+
+def test_different_foods_that_share_a_word_are_not_flagged():
+    # a new ingredient must be kept even if its name overlaps a listed one
+    cases = [("onion", "spring onion"), ("buttermilk", "butter"), ("peanut butter", "butter")]
+    for extra, listed in cases:
+        result = make_result(extra_ingredients=[make_extra(name=extra)])
+        assert validate_result(result, 3, [listed, "x", "y"]) == [], (extra, listed)
+
+
+def test_listed_name_plus_a_descriptor_is_flagged():
+    for extra in ["butter, melted", "butter (for greasing)", "butter - softened"]:
+        result = make_result(extra_ingredients=[make_extra(name=extra)])
+        assert any("already" in p for p in validate_result(result, 3, ["butter", "x", "y"])), extra
+
+
 def test_two_identical_extras_are_caught():
     result = make_result(extra_ingredients=[make_extra(), make_extra()])
     assert any("twice" in p for p in validate_result(result, 3, LISTED))
@@ -293,14 +323,14 @@ def test_estimate_cost_and_batch_discount():
 
 def test_augment_recipe_ok_first_try():
     client = FakeClient([make_result()])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    record = augment_recipe(client, make_recipe())
     assert record["status"] == "ok" and record["attempts"] == 1
-    assert record["recipe_key"] == "k1" and len(client.requests) == 1
+    assert record["source_ref"] == 9001 and record["recipe_key"] == 1 and len(client.requests) == 1
 
 
 def test_augment_recipe_passes_dials_through_and_records_mode():
     client = FakeClient([make_result()])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"), thinking=THINKING_OFF)
+    record = augment_recipe(client, make_recipe(), thinking=THINKING_OFF)
     assert client.requests[0]["thinking"] == {"type": "disabled"}
     assert record["mode"] == "nothinking" and record["thinking_tokens"] == 0
 
@@ -313,7 +343,7 @@ def test_augment_recipe_sums_thinking_tokens_across_attempts():
 
     bad = with_thinking(json.dumps(make_result(cuisines=[])), 30)
     good = with_thinking(json.dumps(make_result()), 20)
-    record = augment_recipe(FakeClient([bad, good]), make_recipe(recipe_key="k1"))
+    record = augment_recipe(FakeClient([bad, good]), make_recipe())
     assert record["thinking_tokens"] == 50 and record["mode"] == "thinking"
 
 
@@ -321,7 +351,7 @@ def test_augment_recipe_retries_once_with_problems_and_sums_tokens():
     bad = make_result()
     bad["ingredients"].pop()
     client = FakeClient([bad, make_result()])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    record = augment_recipe(client, make_recipe())
     assert record["status"] == "ok" and record["attempts"] == 2
     assert record["input_tokens"] == 200 and record["output_tokens"] == 100
     assert "positions" in client.requests[1]["messages"][0]["content"]
@@ -330,7 +360,7 @@ def test_augment_recipe_retries_once_with_problems_and_sums_tokens():
 def test_augment_recipe_retries_when_an_extra_repeats_a_listed_name():
     bad = make_result(extra_ingredients=[make_extra(name="eggs")])
     client = FakeClient([bad, make_result()])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    record = augment_recipe(client, make_recipe())
     assert record["status"] == "ok" and record["attempts"] == 2
     assert "already" in client.requests[1]["messages"][0]["content"]
 
@@ -338,7 +368,7 @@ def test_augment_recipe_retries_when_an_extra_repeats_a_listed_name():
 def test_augment_recipe_fails_after_two_bad_answers():
     bad = make_result(cuisines=[])
     client = FakeClient([bad, bad])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    record = augment_recipe(client, make_recipe())
     assert record["status"] == "failed" and record["attempts"] == 2
     assert record["problems"] and len(client.requests) == 2
 
@@ -346,13 +376,129 @@ def test_augment_recipe_fails_after_two_bad_answers():
 def test_augment_recipe_treats_cut_off_answer_as_a_problem():
     cut = fake_message("{", stop_reason="max_tokens")
     client = FakeClient([cut, make_result()])
-    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    record = augment_recipe(client, make_recipe())
     assert record["status"] == "ok" and record["attempts"] == 2
 
 
 def test_resume_skips_ok_but_not_failed(tmp_path):
     path = tmp_path / "out.jsonl"
     assert load_done_keys(path) == set()
-    append_record(path, {"recipe_key": "a", "status": "ok"})
-    append_record(path, {"recipe_key": "b", "status": "failed"})
-    assert load_done_keys(path) == {"a"}
+    append_record(path, {"source_ref": 1, "status": "ok"})
+    append_record(path, {"source_ref": 2, "status": "failed"})
+    assert load_done_keys(path) == {1}
+
+
+# --- stratified sample for the thinking comparison ---
+
+
+def make_frame(n_equal=10, n_more=10, n_fewer=10):
+    """Recipes whose quantity count is the same as, above, or below the name count."""
+    rows = []
+    for kind, count, extra in (("equal", n_equal, 0), ("more", n_more, 2), ("fewer", n_fewer, -1)):
+        for i in range(count):
+            parts = ["a", "b", "c"]
+            rows.append(
+                {
+                    "kind": kind,
+                    "recipe_key": len(rows) + 1,
+                    "source_ref": 5000 + 7 * len(rows),
+                    "ingredient_parts": parts,
+                    "quantities_raw": ["1"] * (len(parts) + extra),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_quantity_group_names_the_three_cases():
+    assert quantity_group(4, 4) == "equal"
+    assert quantity_group(4, 5) == "more"
+    assert quantity_group(4, 3) == "fewer"
+
+
+def test_stratified_sample_takes_the_quota_from_each_group():
+    sample = stratified_sample(make_frame(), {"equal": 7, "more": 10, "fewer": 3}, seed=1)
+    kinds = sample["kind"].value_counts().to_dict()
+    assert kinds == {"equal": 7, "more": 10, "fewer": 3}
+    assert sample["source_ref"].is_unique
+
+
+def test_stratified_sample_is_reproducible_and_seed_dependent():
+    quotas = {"equal": 3, "more": 3, "fewer": 3}
+    a = stratified_sample(make_frame(), quotas, seed=5)["source_ref"].tolist()
+    assert a == stratified_sample(make_frame(), quotas, seed=5)["source_ref"].tolist()
+    assert a != stratified_sample(make_frame(), quotas, seed=6)["source_ref"].tolist()
+
+
+def test_stratified_sample_raises_when_a_group_is_too_small():
+    with pytest.raises(ValueError, match="fewer"):
+        stratified_sample(make_frame(n_fewer=2), {"equal": 1, "more": 1, "fewer": 3}, seed=1)
+
+
+# --- compare run: runner, snapshot, separate files per mode ---
+
+
+def full_frame():
+    """make_frame plus the other stage 1 columns, using numpy arrays like parquet gives."""
+    df = make_frame(n_equal=2, n_more=2, n_fewer=2)
+    df["name"] = [f"Recipe {k}" for k in df["source_ref"]]
+    df["recipe_category"] = "Main"
+    df["keywords"] = [np.array(["Easy", "Thai"])] * len(df)
+    df["ingredient_parts"] = [np.array(p) for p in df["ingredient_parts"]]
+    df["quantities_raw"] = [np.array(q) for q in df["quantities_raw"]]
+    df["quantities_aligned"] = [len(p) == len(q) for p, q in zip(df["ingredient_parts"], df["quantities_raw"])]
+    df["recipe_servings"] = [4.0, float("nan")] * 3
+    df["recipe_yield"] = "4 servings"
+    df["instructions"] = [np.array(["Mix.", "Serve."])] * len(df)
+    return df
+
+
+def test_run_recipes_writes_records_and_skips_done_ones(tmp_path):
+    path = tmp_path / "out.jsonl"
+    recipes = [make_recipe(source_ref=1), make_recipe(source_ref=2)]
+    first = FakeClient([make_result(), make_result()])
+    assert len(run_recipes(first, recipes, path, workers=1)) == 2
+    second = FakeClient([])  # an API call here would raise, so none may happen
+    assert run_recipes(second, recipes, path, workers=1) == []
+    assert load_done_keys(path) == {1, 2}
+
+
+def test_run_recipes_passes_dials_to_every_request(tmp_path):
+    client = FakeClient([make_result()])
+    run_recipes(client, [make_recipe()], tmp_path / "o.jsonl", 1, thinking=THINKING_OFF)
+    assert client.requests[0]["thinking"] == {"type": "disabled"}
+
+
+def test_stage1_snapshot_is_plain_json_with_missing_as_none():
+    row = full_frame().iloc[1].to_dict()  # servings is NaN here
+    snapshot = stage1_snapshot(row)
+    assert snapshot["recipe_servings"] is None
+    assert snapshot["keywords"] == ["Easy", "Thai"] and snapshot["group"] == "equal"
+    json.dumps(snapshot)  # numpy types would raise here
+
+
+def test_compare_modes_use_same_recipes_and_separate_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(augment_module, "PILOT_DIR", tmp_path)
+    monkeypatch.setattr(augment_module, "COMPARE_QUOTAS", {"equal": 1, "more": 1, "fewer": 1})
+    df = full_frame()
+    thinking = FakeClient([make_result()] * 3)
+    plain = FakeClient([make_result()] * 3)
+    run_compare(thinking, df, "thinking", workers=1)
+    run_compare(plain, df, "nothinking", workers=1)
+
+    def keys(name):
+        return {json.loads(line)["source_ref"] for line in (tmp_path / name).read_text().splitlines()}
+
+    assert keys("results_thinking.jsonl") == keys("results_nothinking.jsonl") and len(keys("results_thinking.jsonl")) == 3
+    assert all("thinking" not in r for r in thinking.requests)
+    assert all(r["thinking"] == {"type": "disabled"} for r in plain.requests)
+    assert len(json.loads((tmp_path / "stage1_rows.json").read_text())) == 3
+
+
+def test_resume_uses_source_ref_not_the_position_number(tmp_path):
+    """A shifted recipe_key (stage 1 changed) must not make a rerun skip the wrong recipe."""
+    path = tmp_path / "out.jsonl"
+    run_recipes(FakeClient([make_result()]), [make_recipe(source_ref=111, recipe_key=5)], path, 1)
+    shifted = make_recipe(source_ref=222, recipe_key=5)  # same position number, different recipe
+    client = FakeClient([make_result()])
+    assert len(run_recipes(client, [shifted], path, 1)) == 1  # not skipped
+    assert load_done_keys(path) == {111, 222}
