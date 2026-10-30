@@ -79,5 +79,22 @@ Most Food.com tags now map to the same-named cuisine, so the baseline table is b
 
 **The risk we have not measured:** near-neighbour confusion (labels covering almost the same food). The repeatability run and the hand check come next. CONCEPTS: [Label granularity and near-neighbour confusion](../docs/CONCEPTS.md#label-granularity-and-near-neighbour-confusion). DECISIONS #26 has a second amendment for this.
 
+### Parameter experiments (about $0.03)
+A learning step: what do the dials on a request do, on 5 messy recipes? We added optional `effort`, `thinking` and `max_tokens` arguments to `build_request_params` (defaults unchanged) and logged `thinking_tokens` per record.
+
+| Experiment | Result |
+|---|---|
+| `max_tokens` 300 vs 4096 | 300 cut off all 5 first attempts (thinking ate the cap); 3 of 5 still failed after the retry; cost went up ($0.0043 vs $0.0039) because the retry resends the input |
+| `effort` low / medium / high | cost $0.0039 / $0.0040 / $0.0049; thinking was 71 to 79% of output; `low` stays |
+| Repeatability: `low` three times | 15 to 17 of 47 ingredient entries differ between identical runs, about the same as `medium` or `high` vs `low` (19 to 21); 4 of 5 recipes changed cuisine set at least once |
+| `temperature` | the Python SDK has no such argument; sent via `extra_body`, the API returns 400 "temperature: Extra inputs are not permitted" (same for `top_p`) |
+
+```python
+def build_request_params(recipe, problems=None, *, effort=EFFORT, thinking=None, max_tokens=MAX_OUTPUT_TOKENS): ...
+```
+The defaults equal the production setting, so nothing changes for normal runs; experiments pass the dials in. The saved record gains `thinking_tokens` and `mode` for the later thinking-on versus thinking-off pilot.
+
+What to take away: `max_tokens` is a safety limit, not a cost dial; the model's answers on messy recipes are noisy, so consistency has to come from the schema, validator, closed lists and prompt rules, and a hand check has to say which answers are right. The cuisine flips (`mediterranean`, `tex_mex`, `american`) are the near-neighbour confusion made visible. CONCEPTS: [Request dials](../docs/CONCEPTS.md#request-dials-max_tokens-effort-thinking-and-temperature).
+
 ## What we'd explain differently next time
 I wrote "the ingredient list is the anchor" as a design assumption while already holding the stage 1 number that only 22% of lists match the quantities, and did not ask what the extras were. The check cost nothing and took minutes. The habit to keep: when a join key looks tidy, compare it with a second signal on a sample before building on it.

@@ -10,6 +10,7 @@ from pipelines.foodcom.augment import (
     MAX_EXTRA_INGREDIENTS,
     MODEL,
     SYSTEM_PROMPT,
+    THINKING_OFF,
     UNITS,
     append_record,
     augment_recipe,
@@ -258,6 +259,19 @@ def test_request_params_carry_schema_effort_and_system_prompt():
     assert params["output_config"]["format"]["schema"] == build_output_schema()
 
 
+def test_request_params_default_dials_match_production():
+    params = build_request_params(make_recipe())
+    assert params["max_tokens"] == 4096 and "thinking" not in params
+
+
+def test_request_params_accept_dials_for_experiments():
+    params = build_request_params(
+        make_recipe(), effort="high", thinking=THINKING_OFF, max_tokens=300
+    )
+    assert params["output_config"]["effort"] == "high"
+    assert params["thinking"] == {"type": "disabled"} and params["max_tokens"] == 300
+
+
 def test_request_params_append_problems_on_retry():
     params = build_request_params(make_recipe(), problems=["wrong count"])
     assert "wrong count" in params["messages"][0]["content"]
@@ -282,6 +296,25 @@ def test_augment_recipe_ok_first_try():
     record = augment_recipe(client, make_recipe(recipe_key="k1"))
     assert record["status"] == "ok" and record["attempts"] == 1
     assert record["recipe_key"] == "k1" and len(client.requests) == 1
+
+
+def test_augment_recipe_passes_dials_through_and_records_mode():
+    client = FakeClient([make_result()])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"), thinking=THINKING_OFF)
+    assert client.requests[0]["thinking"] == {"type": "disabled"}
+    assert record["mode"] == "nothinking" and record["thinking_tokens"] == 0
+
+
+def test_augment_recipe_sums_thinking_tokens_across_attempts():
+    def with_thinking(text, thinking):
+        msg = fake_message(text)
+        msg.usage.output_tokens_details = SimpleNamespace(thinking_tokens=thinking)
+        return msg
+
+    bad = with_thinking(json.dumps(make_result(cuisines=[])), 30)
+    good = with_thinking(json.dumps(make_result()), 20)
+    record = augment_recipe(FakeClient([bad, good]), make_recipe(recipe_key="k1"))
+    assert record["thinking_tokens"] == 50 and record["mode"] == "thinking"
 
 
 def test_augment_recipe_retries_once_with_problems_and_sums_tokens():

@@ -33,6 +33,8 @@ BATCH_DISCOUNT = 0.5
 # Haiku 5.5 thinks by default and thinking tokens count against this cap, so it
 # is generous; we only pay for tokens actually produced.
 MAX_OUTPUT_TOKENS = 4096
+EFFORT = "low"  # how hard the model thinks: low, medium, high (experiments in DECISIONS #26)
+THINKING_OFF = {"type": "disabled"}  # pass as thinking= to skip thinking tokens entirely
 
 PILOT_SIZE = 200
 PILOT_SEED = 42
@@ -333,11 +335,21 @@ def baseline_cuisines(keywords, category) -> list[str]:
     return found[:MAX_CUISINES]
 
 
-def build_request_params(recipe: dict, problems: list[str] | None = None) -> dict:
+def build_request_params(
+    recipe: dict,
+    problems: list[str] | None = None,
+    *,
+    effort: str = EFFORT,
+    thinking: dict | None = None,
+    max_tokens: int = MAX_OUTPUT_TOKENS,
+) -> dict:
     """Build the keyword arguments for one Messages API call about one recipe.
 
-    Inputs: a recipe row as a dict, and optionally the problems found in a
-    previous answer. Output: a dict ready for `client.messages.create(**params)`.
+    Inputs: a recipe row as a dict, optionally the problems found in a previous
+    answer, and the three dials we can turn: `effort`, `thinking` (None keeps the
+    model's default; THINKING_OFF disables it) and `max_tokens`. Defaults match
+    the production setting, so only experiments pass them. Output: a dict ready
+    for `client.messages.create(**params)`.
     One builder feeds both the pilot (direct calls) and the later Batches run, so
     the two cannot drift apart. On a retry the problems are appended to the same
     single user message instead of replaying the model's earlier answer as a
@@ -347,18 +359,21 @@ def build_request_params(recipe: dict, problems: list[str] | None = None) -> dic
     if problems:
         text += "\n\nYour previous answer was rejected for these reasons. Fix them:\n"
         text += "\n".join(f"- {p}" for p in problems)
-    return {
+    params = {
         "model": MODEL,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": max_tokens,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": text}],
         # Low effort: this is extraction, not hard reasoning, and thinking is billed
         # as output. The format key is what forces the answer into our schema.
         "output_config": {
-            "effort": "low",
+            "effort": effort,
             "format": {"type": "json_schema", "schema": build_output_schema()},
         },
     }
+    if thinking is not None:
+        params["thinking"] = thinking
+    return params
 
 
 def parse_answer(message) -> dict:
@@ -382,10 +397,11 @@ def estimate_cost(input_tokens: int, output_tokens: int, batch: bool = False) ->
     return cost * BATCH_DISCOUNT if batch else cost
 
 
-def augment_recipe(client, recipe: dict) -> dict:
+def augment_recipe(client, recipe: dict, **request_options) -> dict:
     """Ask the model about one recipe, validate, and retry once if it fails.
 
-    Inputs: an API client and a recipe dict. Output: one result record (the line we
+    Inputs: an API client, a recipe dict, and optional request dials passed
+    straight to `build_request_params` (effort, thinking, max_tokens). Output: one result record (the line we
     store): recipe_key, status "ok" or "failed", the answer, any remaining problems,
     attempts, and token counts summed over both attempts so cost is never
     under-reported. Two attempts is the cap: a second failure usually means a
@@ -393,11 +409,16 @@ def augment_recipe(client, recipe: dict) -> dict:
     """
     n = len(recipe["ingredient_parts"])
     problems, answer = None, None
-    tokens_in = tokens_out = 0
+    tokens_in = tokens_out = tokens_thinking = 0
     for attempt in (1, 2):
-        message = client.messages.create(**build_request_params(recipe, problems))
+        params = build_request_params(recipe, problems, **request_options)
+        message = client.messages.create(**params)
         tokens_in += message.usage.input_tokens
         tokens_out += message.usage.output_tokens
+        # Thinking tokens are already inside output_tokens; the detail field may be
+        # absent (older responses, test doubles), so read it defensively.
+        details = getattr(message.usage, "output_tokens_details", None)
+        tokens_thinking += getattr(details, "thinking_tokens", 0) or 0
         try:
             answer = parse_answer(message)
             problems = validate_result(answer, n, recipe["ingredient_parts"])
@@ -413,6 +434,8 @@ def augment_recipe(client, recipe: dict) -> dict:
         "problems": problems or [],
         "input_tokens": tokens_in,
         "output_tokens": tokens_out,
+        "thinking_tokens": tokens_thinking,
+        "mode": "nothinking" if request_options.get("thinking") == THINKING_OFF else "thinking",
         "model": MODEL,
     }
 

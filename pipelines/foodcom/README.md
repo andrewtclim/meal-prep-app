@@ -128,9 +128,10 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
-- Whether turning thinking off cuts the cost without hurting accuracy (estimated about $48 direct / $24 batch, untested).
+- Whether turning thinking off cuts the cost without hurting accuracy (thinking was about 71% of output in a 5-recipe test; the saving is untested). The 20-recipe thinking versus no-thinking pilot answers this.
+- Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 40 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 44 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
