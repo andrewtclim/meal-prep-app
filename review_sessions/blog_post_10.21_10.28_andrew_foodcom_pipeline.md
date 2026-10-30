@@ -137,9 +137,9 @@ The schema cannot say "exactly one entry per ingredient" or "null quantity only 
 ```python
 def load_done_keys(path) -> set[str]:
     ...
-    return {r["recipe_key"] for r in records if r["status"] == "ok"}
+    return {r["source_ref"] for r in records if r["status"] == "ok"}
 ```
-Each result is appended to a file as it arrives, and a rerun skips the recipes already saved. The key is our `recipe_key`, not a list position, because batch results come back in any order and the key must mean the same recipe on every run.
+Each result is appended to a file as it arrives, and a rerun skips the recipes already saved. The key is Food.com's `source_ref`, because batch results come back in any order and the key must mean the same recipe on every run. (This post first said `recipe_key`. That is our own position number from `clean.py` and can shift if stage 1 changes, so Paul's review of PR #18 moved the key to `source_ref`.)
 
 ### Results of the 3-recipe test
 | Recipe | Ingredients | Cuisines | Tokens in / out | Attempts |

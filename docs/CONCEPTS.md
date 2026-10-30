@@ -151,8 +151,8 @@
 
 ### Append-only results file (resumable jobs)
 - **What it is:** Writing each finished result as one line to a file, flushed right away, and skipping already-finished keys on a rerun. A crash loses at most the call in flight.
-- **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `recipe_key`.
-- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs (a list index is not), or a rerun could skip or repeat the wrong recipes. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
+- **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `source_ref` (Food.com's own id).
+- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
 - **Common question:** How do you make a long, paid job safe to rerun? Save results as you go under a stable key, and skip keys already saved.
 
 ### Environment file and .env.example

@@ -1,7 +1,7 @@
 # Week of 10.28 to 11.04: Fixing the incomplete ingredient list in the Food.com augment step (Andrew)
 
 ## Summary
-After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. Next come parameter experiments and a 20-recipe comparison of thinking on and off.
+After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. We then ran a 20-recipe comparison of thinking on and off, built a notebook to review it, and fixed a result-key bug Paul found in review (PR #18). The thinking decision waits on both of us reading the notebook.
 
 ## PRs this week
 | PR | What it did | State |
@@ -54,7 +54,7 @@ for e in extras:
     elif name in taken: ...              # already listed, or listed twice
     problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
 ```
-The schema can only guarantee shape. The cap, the no-repeat rule and the salt/water rule depend on the recipe, so code checks them after the fact, and any problem goes into the one retry. `quantity_problems` is shared with listed ingredients so both follow the same null-with-`to_taste` rule. Repeat detection is an exact, case-insensitive match, so "garlic" still slips past "garlic cloves"; fuzzy matching could wrongly reject a real extra such as peanut butter, so exact is the safer start.
+The schema can only guarantee shape. The cap, the no-repeat rule and the salt/water rule depend on the recipe, so code checks them after the fact, and any problem goes into the one retry. `quantity_problems` is shared with listed ingredients so both follow the same null-with-`to_taste` rule. Repeat detection first matched names exactly. The corn bake recipe (an extra named "cheddar cheese, shredded (for topping)" next to a listed "cheddar cheese") showed that is too weak. A first fix rejected any extra containing a listed word, which would have wrongly rejected "peanut butter" next to "butter" and cost a pointless retry. The final rule is narrower: an extra is rejected only if it equals a listed name or is a listed name followed by a descriptor after a comma, bracket or dash. On the 82 extras we had saved it flags one true duplicate and no false alarm.
 
 **Result of a 5-recipe test on the new schema ($0.0035).** All five validated on the first try and the model found every missing item we had spotted by eye: onions, feta, cooking spray, oil, taco seasoning mix, roasted peppers and squid. It never added salt or water. Open questions for the hand check: the model gave 3 onions for a source of `1 -3` where our rule says the midpoint, 2; and amounts for some extras (oil, 2 tbsp) cannot be checked against the quantities. Input rose by roughly 400 tokens per recipe, but the sample was biased toward long recipes, so the cost comparison waits for the matched 20-recipe pilot.
 
@@ -95,6 +95,30 @@ def build_request_params(recipe, problems=None, *, effort=EFFORT, thinking=None,
 The defaults equal the production setting, so nothing changes for normal runs; experiments pass the dials in. The saved record gains `thinking_tokens` and `mode` for the later thinking-on versus thinking-off pilot.
 
 What to take away: `max_tokens` is a safety limit, not a cost dial; the model's answers on messy recipes are noisy, so consistency has to come from the schema, validator, closed lists and prompt rules, and a hand check has to say which answers are right. The cuisine flips (`mediterranean`, `tex_mex`, `american`) are the near-neighbour confusion made visible. CONCEPTS: [Request dials](../docs/CONCEPTS.md#request-dials-max_tokens-effort-thinking-and-temperature).
+
+### Thinking vs no thinking: 20 recipes, and a review notebook
+We ran the same stratified 20 recipes with Claude's default thinking and with thinking off. The sample is 7 recipes where raw quantities line up with the ingredient names, 10 with extra quantities and 3 with fewer, and we changed the seed from 7 to 2026 after noticing seed 7 had drawn recipes we had already read while writing the prompt. Judging the final result on them would flatter it, which is a small case of data leakage.
+
+`pipelines/foodcom/augment.py`
+```python
+COMPARE_QUOTAS = {"equal": 7, "more": 10, "fewer": 3}
+sample = stratified_sample(df, COMPARE_QUOTAS, COMPARE_SEED)
+options = {"thinking": THINKING_OFF} if mode == "nothinking" else {}
+```
+Both modes draw the same recipes from a fixed seed, and each writes its own results file, because resume is keyed by one id and would otherwise skip the second mode entirely.
+
+| | Thinking | No thinking |
+|---|---|---|
+| Valid | 20/20 | 20/20 |
+| Retries | 0 | 2 |
+| Output tokens / recipe | 932 | 288 |
+| Full run, direct / Batches | ~$160 / ~$80 | ~$93 / ~$46 |
+
+Thinking off saves about 42%, but the two modes differ on 29% of ingredient entries, about the same as two identical thinking runs differ from each other, so cost alone cannot decide. The base estimate also rose from $108 to about $160 because of the extras and the 90 cuisines.
+
+We first made `review.csv` a 216-row file and the notebook too long. We redid it as a short review tool: one card per recipe (steps, ingredient table with the raw quantity beside each name, both answers with differences highlighted) and a small cell to set a verdict. The Cheesy Scalloped Corn Bake card showed a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps give no amounts.
+
+**Paul's review of PR #18** found a real bug: saved results were keyed on `recipe_key`, a position number that shifts if stage 1 changes. We now key on Food.com's `source_ref`, migrated the 240 saved records (0 mismatches), and corrected the docs. His second comment (the second cuisine is mostly filler) was true of the old prompt; after the prompt change only 1 of 20 thinking recipes and 6 of 20 no-thinking recipes had a second cuisine, so we kept the cap at 2 for now. Decision pending: both of us review `pilot/thinking_vs_no_thinking.ipynb`.
 
 ## What we'd explain differently next time
 I wrote "the ingredient list is the anchor" as a design assumption while already holding the stage 1 number that only 22% of lists match the quantities, and did not ask what the extras were. The check cost nothing and took minutes. The habit to keep: when a join key looks tidy, compare it with a second signal on a sample before building on it.

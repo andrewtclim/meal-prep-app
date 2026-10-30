@@ -26,7 +26,7 @@ Reads `data/raw/recipes.parquet`. Writes `data/interim/recipes_clean.parquet` (a
 - We removed 2,219 recipes with no ingredients and 2 with no instructions.
 - We added `quantities_aligned`, which is true when a recipe has as many quantities as ingredients. Only about 22% do, so we kept the rest. Stage 2 pairs them up.
 - We removed 91,877 duplicate recipe names (`"Lemonade"` and `"lemonades!"` count as the same name). We kept the best-rated copy, then the most-reviewed, then the lowest `source_ref`, so every rerun picks the same one. That left 428,419 recipes.
-- We added our own `recipe_key`, numbered 1 to N.
+- We added our own `recipe_key`, numbered 1 to N after dedupe. It is a position, so it can shift if stage 1 changes. Never store results against it; stage 2 keys on Food.com's `source_ref`.
 - We turned `review_count` and `recipe_servings` into whole numbers that can be missing.
 
 ### Choosing which recipes to keep
@@ -55,7 +55,7 @@ The dataset has no ingredient units, and its quantities line up with the ingredi
 
 Run it (this calls the paid API; it loads the key from `.env`):
 `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --pilot --limit 3`
-Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subset.parquet`, appends to `data/interim/augment_results.jsonl`. Rerunning skips recipes already saved. Only `--pilot` exists; the full run is not built.
+Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subset.parquet`, appends to `data/interim/augment_results.jsonl`. Rerunning skips recipes already saved (matched on Food.com's `source_ref`). `--compare thinking` or `--compare nothinking` runs the stratified 20-recipe comparison below. Only these two exist; the full run is not built.
 
 ### How a recipe is processed
 1. `build_user_message` turns the recipe row into numbered text.
@@ -126,12 +126,30 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - Where the raw quantity lined up with the ingredient list, the model kept it every time (402 rows). Ranges such as `2 -4` became the midpoint.
 - The model tagged `american` on 156 of 200 recipes, often as a second cuisine. This may be a filler tag and needs a look.
 
+### Thinking vs no thinking: 20 recipes (2026-10-30)
+**Needs review by both of us before we choose how to run the 212,846 recipes.** Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
+
+- **Sample:** 20 recipes, stratified by how raw quantities compare with ingredient names: 7 `equal`, 10 `more`, 3 `fewer` (fixed seed 2026, chosen so none were recipes we looked at while writing the prompt). Both modes got the same 20; only the `thinking` setting differs (`effort` low in both).
+- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl`, `results_nothinking.jsonl`, plus the notebook and `review.csv`.
+
+| | Thinking | No thinking |
+|---|---|---|
+| Valid answers | 20 of 20 | 20 of 20 |
+| Needed a retry | 0 | 2 (cause not recorded) |
+| Output tokens per recipe | 932 (672 thinking) | 288 |
+| Cost per recipe, reweighted to the real 21/75/4% mix | $0.00075 | $0.00044 |
+| Full run, direct / Batches (rough, from 20 recipes) | ~$160 / ~$80 | ~$93 / ~$46 |
+
+- Turning thinking off saves about 42%, but we do not know yet whether the answers are as good. The modes give a different amount or unit on 49 of 170 ingredient entries (29%) and a different cuisine set on 9 of 20 recipes. For scale, two identical thinking runs differed on about a third of entries in a 5-recipe test, so a difference alone does not mean one mode is worse.
+- The base cost rose from the earlier $108 direct / $54 batch estimate to about $160 / $80 with thinking: the 90-cuisine list and the extras rules add about 677 input tokens per call, and the answers are longer.
+- One recipe (Cheesy Scalloped Corn Bake) shows a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps say "mix all ingredients", so neither mode can recover it or know the amounts. We have not decided whether to flag such recipes as possibly incomplete.
+
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
-- Whether turning thinking off cuts the cost without hurting accuracy (thinking was about 71% of output in a 5-recipe test; the saving is untested). The 20-recipe thinking versus no-thinking pilot answers this.
+- Which mode to use: the cost side is measured (above); the accuracy side waits on our two reviews of the 20-recipe notebook.
 - Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 44 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 56 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
