@@ -102,11 +102,19 @@ What this showed:
 - The API accepted the schema, including the nullable `quantity`.
 - Where the raw quantity was blank (sweet butter) or clearly shifted (Grand Marnier `1` became `0.25 cup`), the model took the amount from the steps.
 - We looked at the answers by eye and they read as sensible. A few are debatable (ginger as `0.5 piece`, Polish sausage as `other`). **Accuracy has not been measured**; that is the job of the 30-recipe hand check after the pilot.
-- Cost was about 1,570 input and 700 output tokens per recipe, roughly twice our estimate. Projected to 212,846 recipes that is about $54 through the Batches API or $108 with direct calls (Haiku 5.5 prices from the model table cached 2026-10-06). From 3 recipes this is a rough figure. We suspect thinking tokens explain the high output count but have not confirmed it.
+- Cost was about 1,570 input and 700 output tokens per recipe, roughly twice our estimate. Projected to 212,846 recipes that is about $54 through the Batches API or $108 with direct calls (Haiku 5.5 prices from the model table cached 2026-10-06). From 3 recipes this was a rough figure; the 200-recipe pilot below replaces it. The high output count is thinking tokens (a raw response reported 589 thinking tokens of 910 output tokens).
+
+### 200-recipe pilot (2026-10-28)
+The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
+- All 200 passed validation on the first try, with no retries. The 197 new calls cost $0.0998.
+- Tokens per recipe: 1,595 in and 694 out on average. The JSON answer itself is only about 136 tokens, so roughly 80% of the output is thinking.
+- Projected for 212,846 recipes (Haiku 5.5 prices from the model table cached 2026-10-06): **$108 with direct calls (range $104 to $112) and $54 through the Batches API (range $52 to $56)**. The range reflects sampling noise only, not a price change.
+- Where the raw quantity lined up with the ingredient list, the model kept it every time (402 rows). Ranges such as `2 -4` became the midpoint.
+- The model tagged `american` on 156 of 200 recipes, often as a second cuisine. This may be a filler tag and needs a look.
 
 ### Not done yet
-- The 200-recipe pilot, and the 30-recipe review file for a hand check.
-- Whether turning thinking off cuts the cost without hurting accuracy.
+- The 30-recipe review file for a hand check of accuracy.
+- Whether turning thinking off cuts the cost without hurting accuracy (estimated about $48 direct / $24 batch, untested).
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
