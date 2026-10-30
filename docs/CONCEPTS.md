@@ -124,6 +124,12 @@
 - **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
 - **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
 
+### Anchor and completeness check
+- **What it is:** The anchor is the list that every other field attaches to; here, the recipe's `ingredient_parts`, which the model answers one-for-one by position. Like a join key, it only works if it is complete: a missing row cannot be recovered downstream. A completeness check compares the anchor with an independent signal (here, the quantities list and the steps) on real rows before building on it.
+- **Where we use it:** The check found about three quarters of recipes have more quantities than names, and the steps use unlisted items such as oil. The fix is `extra_ingredients` in `build_output_schema` and `validate_result` in `pipelines/foodcom/augment.py` (DECISIONS #26 amendment).
+- **Why this over the alternative:** Trusting a column because it looks tidy is cheaper but silently drops data, and we would only notice after paying for the full run. A check on 15 rows plus a keyword count cost nothing. The tradeoff is that the keyword count is rough, so we still hand-check the model's extras.
+- **Common question:** How do you validate a dataset before building a pipeline on it? Compare each key column with an independent field on a sample, and measure the gap instead of assuming it.
+
 ### Baseline for evaluation
 - **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
 - **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 15.9% of the subset. It has no way to say "italian", because no tag in the data does.

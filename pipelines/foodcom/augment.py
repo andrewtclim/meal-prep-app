@@ -61,6 +61,8 @@ CUISINES = [
 ]  # fmt: skip
 
 MAX_CUISINES = 3
+MAX_EXTRA_INGREDIENTS = 6  # cap on ingredients the model may add beyond the source list
+EXTRA_BANNED_NAMES = {"salt", "water"}  # often unlisted on purpose, so never an "extra"
 
 # Rule-based cuisine baseline: Food.com keyword or category (lowercased) -> our
 # cuisine. Only words that name a specific cuisine are mapped. "european" and
@@ -97,9 +99,12 @@ def build_output_schema() -> dict:
     One entry per ingredient slot, keyed by `position` (0-based index into the
     recipe's ingredient list). We key by position instead of echoing the name:
     it is fewer output tokens (output costs 5x input) and cannot drift from the
-    source spelling. Enums come from UNITS and CUISINES above, so the model
-    cannot invent a unit. Length limits (one entry per slot, at most
-    MAX_CUISINES cuisines) are not expressed here; validate_result checks them.
+    source spelling. Items the source list lacks go in `extra_ingredients`
+    instead, keyed by name since they have no position. Enums come from UNITS
+    and CUISINES above, so the model cannot invent a unit. Length limits (one
+    entry per slot, at most MAX_CUISINES cuisines, at most
+    MAX_EXTRA_INGREDIENTS extras) are not expressed here; validate_result
+    checks them.
     """
     return {
         "type": "object",
@@ -117,9 +122,24 @@ def build_output_schema() -> dict:
                     "additionalProperties": False,
                 },
             },
+            # Items the steps use that the source ingredient list lacks (oil, feta).
+            # No position to point at, so these carry a name instead.
+            "extra_ingredients": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "quantity": {"type": ["number", "null"]},
+                        "unit": {"type": "string", "enum": UNITS},
+                    },
+                    "required": ["name", "quantity", "unit"],
+                    "additionalProperties": False,
+                },
+            },
             "cuisines": {"type": "array", "items": {"type": "string", "enum": CUISINES}},
         },
-        "required": ["ingredients", "cuisines"],
+        "required": ["ingredients", "extra_ingredients", "cuisines"],
         "additionalProperties": False,
     }
 
@@ -147,6 +167,15 @@ Rules:
   pepper, garnish, "oil for frying"), use unit "to_taste" and quantity null.
   Only "to_taste" may have a null quantity.
 - Scale to the whole recipe as written, not per serving.
+- The ingredient list can be incomplete. If the instructions clearly use an
+  ingredient that is NOT in the list (for example oil, or a cheese), add it to
+  extra_ingredients with its name, quantity and unit. Rules for extras:
+  * Only add what the instructions actually use. Never invent an ingredient to
+    explain a leftover raw quantity; unused raw quantities are simply ignored.
+  * Do not add salt or water.
+  * Do not repeat an ingredient that is already in the list.
+  * At most {MAX_EXTRA_INGREDIENTS} extras. Return an empty array if nothing is missing.
+  * Same quantity and unit rules as above, including to_taste with null.
 - cuisines: list up to {MAX_CUISINES} cuisines that best describe the dish, most
   fitting first. Use "other" only if none fit.
 """
@@ -186,10 +215,27 @@ def build_user_message(recipe: dict) -> str:
     )
 
 
-def validate_result(result: dict, n_ingredients: int) -> list[str]:
+def quantity_problems(label: str, quantity, unit) -> list[str]:
+    """Check one entry's quantity against its unit; `label` names it in messages.
+
+    Shared by listed ingredients and extras so both follow the same rule: a null
+    quantity goes with to_taste and only with to_taste, and amounts are positive.
+    """
+    problems = []
+    if unit == "to_taste" and quantity is not None:
+        problems.append(f"{label}: to_taste must have null quantity")
+    if unit != "to_taste" and quantity is None:
+        problems.append(f"{label}: null quantity needs unit to_taste")
+    if quantity is not None and quantity <= 0:
+        problems.append(f"{label}: quantity must be positive")
+    return problems
+
+
+def validate_result(result: dict, n_ingredients: int, listed_names=()) -> list[str]:
     """Check a parsed model answer against the rules the schema cannot express.
 
-    Inputs: the answer as a dict, and how many ingredient slots the recipe has.
+    Inputs: the answer as a dict, how many ingredient slots the recipe has, and
+    the source ingredient names (to catch extras that repeat a listed item).
     Output: a list of problems; empty means the answer is usable. The schema
     guarantees types and enum values, but not "one entry per slot" or "null only
     for to_taste", and a wrong count would silently misalign ingredients with
@@ -206,13 +252,25 @@ def validate_result(result: dict, n_ingredients: int) -> list[str]:
         )
 
     for e in entries:
-        quantity, unit = e.get("quantity"), e.get("unit")
-        if unit == "to_taste" and quantity is not None:
-            problems.append(f"position {e.get('position')}: to_taste must have null quantity")
-        if unit != "to_taste" and quantity is None:
-            problems.append(f"position {e.get('position')}: null quantity needs unit to_taste")
-        if quantity is not None and quantity <= 0:
-            problems.append(f"position {e.get('position')}: quantity must be positive")
+        problems += quantity_problems(f"position {e.get('position')}", e.get("quantity"), e.get("unit"))
+
+    # Exact (case-insensitive) match only. Fuzzy matching ("garlic" vs "garlic
+    # cloves") would need a normalizer we do not have yet; a miss here only means
+    # a near-duplicate reaches the hand check.
+    extras = result.get("extra_ingredients", [])
+    if len(extras) > MAX_EXTRA_INGREDIENTS:
+        problems.append(f"at most {MAX_EXTRA_INGREDIENTS} extra_ingredients; got {len(extras)}")
+    taken = {str(name).strip().lower() for name in listed_names}
+    for e in extras:
+        name = str(e.get("name", "")).strip().lower()
+        if not name:
+            problems.append("extra_ingredients: name must not be empty")
+        elif name in EXTRA_BANNED_NAMES:
+            problems.append(f"extra '{name}': do not add salt or water")
+        elif name in taken:
+            problems.append(f"extra '{name}': already in the ingredient list or listed twice")
+        taken.add(name)
+        problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
 
     cuisines = result.get("cuisines", [])
     if not 1 <= len(cuisines) <= MAX_CUISINES:
@@ -308,7 +366,7 @@ def augment_recipe(client, recipe: dict) -> dict:
         tokens_out += message.usage.output_tokens
         try:
             answer = parse_answer(message)
-            problems = validate_result(answer, n)
+            problems = validate_result(answer, n, recipe["ingredient_parts"])
         except ValueError as error:
             answer, problems = None, [str(error)]
         if not problems:

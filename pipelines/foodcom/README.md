@@ -60,9 +60,22 @@ Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subs
 ### How a recipe is processed
 1. `build_user_message` turns the recipe row into numbered text.
 2. `build_request_params` adds the rules (`SYSTEM_PROMPT`) and the answer shape (`build_output_schema`).
-3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], cuisines: [...]}`.
-4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", 1 to 3 cuisines).
+3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], extra_ingredients: [{name, quantity, unit}], cuisines: [...]}`.
+4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", 1 to 3 cuisines, and for extras: at most 6, no salt or water, no repeat of a listed name).
 5. On a problem, one retry names the problems. Then the result line is saved.
+
+### The ingredient list is not complete (2026-10-29)
+We first treated `ingredient_parts` as the full list. It is not: 75% of recipes have more quantities than names, and the steps use items the list lacks. Example, Joe's Saute Onions:
+
+| Field | Value |
+|---|---|
+| `ingredient_parts` (4) | olive oil, salt, butter, sugar |
+| `quantities_raw` (5) | `1 -3` and four blanks |
+| Steps | "Slice off the root and top ends of the onions, peel the onions..." |
+
+So the model also returns `extra_ingredients` for items the steps clearly use that the list lacks (here: onions). Leftover quantities with no matching item are dropped. A rough keyword count puts the gap about 21 points above the noise floor in the "more quantities" group; it is an estimate, not a measured miss rate (DECISIONS #26 amendment). The 200-recipe pilot below ran on the old schema.
+
+A 5-recipe test on the new schema ($0.0035) passed validation on the first try and found every missing item we had spotted by eye (onions, feta, oil, taco seasoning, squid and others). Accuracy is not measured; the 20-recipe pilot hand check does that.
 
 ### The fixed lists
 - **Units (19):** g, kg, ml, l, tsp, tbsp, cup, fl_oz, oz, lb, piece, clove, slice, can, package, bunch, pinch, dash, to_taste.
@@ -119,4 +132,4 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 26 tests cover the schema, prompt, validator, cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 37 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.

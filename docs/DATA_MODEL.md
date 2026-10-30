@@ -19,7 +19,7 @@
 |---|---|---|
 | Users | users, cuisines, user_cuisine, allergens, user_allergen, user_events | Profile: name, city, budget, cuisine preferences, allergens. `user_events` is activity (views, saves) |
 | Pantry | user_pantry | What the user has now, linked to `ingredient_id` |
-| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion |
+| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion. Food.com recipes give `recipe_ingredient` two kinds of row: listed ingredients and LLM-found extras (DECISIONS #26), so the table needs a flag (proposed: `is_extra`) and both kinds go through the same ingredient normalization. Not created yet |
 | Embeddings | recipe embeddings, ingredient embeddings (pgvector) | Recipe embeddings power semantic search. Ingredient embeddings are the substitution model's output |
 | Plans | meal_plans, plan_items | A week's approved plan and what's cooked each day |
 | Conversations | conversations, messages | Our own transcript tables. `conversations.thread_id` matches the LangGraph thread |

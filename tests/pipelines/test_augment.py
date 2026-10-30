@@ -7,6 +7,7 @@ from pipelines.foodcom.augment import (
     CUISINE_KEYWORDS,
     CUISINES,
     MAX_CUISINES,
+    MAX_EXTRA_INGREDIENTS,
     MODEL,
     SYSTEM_PROMPT,
     UNITS,
@@ -43,9 +44,15 @@ def make_result(**overrides):
             {"position": 1, "quantity": 0.5, "unit": "cup"},
             {"position": 2, "quantity": None, "unit": "to_taste"},
         ],
+        "extra_ingredients": [],
         "cuisines": ["american"],
     }
     return result | overrides
+
+
+def make_extra(**overrides):
+    extra = {"name": "olive oil", "quantity": 2, "unit": "tbsp"}
+    return extra | overrides
 
 
 def test_vocabularies_have_no_duplicates():
@@ -119,6 +126,60 @@ def test_cuisine_count_and_duplicates():
     assert len(too_many) > MAX_CUISINES
     assert validate_result(make_result(cuisines=too_many), 3)
     assert validate_result(make_result(cuisines=["italian", "italian"]), 3)
+
+
+LISTED = ["eggs", "mayonnaise", "salt"]  # the names behind make_recipe()
+
+
+def test_schema_requires_extra_ingredients():
+    schema = build_output_schema()
+    assert "extra_ingredients" in schema["required"]
+    item = schema["properties"]["extra_ingredients"]["items"]["properties"]
+    assert item["unit"]["enum"] == UNITS and set(item) == {"name", "quantity", "unit"}
+
+
+def test_system_prompt_states_the_extra_ingredient_rules():
+    assert str(MAX_EXTRA_INGREDIENTS) in SYSTEM_PROMPT and "extra_ingredients" in SYSTEM_PROMPT
+
+
+def test_valid_extras_have_no_problems():
+    extras = [make_extra(), make_extra(name="cooking spray", quantity=None, unit="to_taste")]
+    assert validate_result(make_result(extra_ingredients=extras), 3, LISTED) == []
+
+
+def test_empty_extras_are_fine():
+    assert validate_result(make_result(extra_ingredients=[]), 3, LISTED) == []
+
+
+def test_too_many_extras_is_caught():
+    extras = [make_extra(name=f"item {i}") for i in range(MAX_EXTRA_INGREDIENTS + 1)]
+    assert any("at most" in p for p in validate_result(make_result(extra_ingredients=extras), 3, LISTED))
+
+
+def test_extra_repeating_a_listed_name_is_caught_ignoring_case():
+    result = make_result(extra_ingredients=[make_extra(name="Eggs")])
+    assert any("already" in p for p in validate_result(result, 3, LISTED))
+
+
+def test_two_identical_extras_are_caught():
+    result = make_result(extra_ingredients=[make_extra(), make_extra()])
+    assert any("twice" in p for p in validate_result(result, 3, LISTED))
+
+
+def test_salt_and_water_are_not_allowed_as_extras():
+    for name in ("salt", "Water"):
+        result = make_result(extra_ingredients=[make_extra(name=name)])
+        assert any("salt or water" in p for p in validate_result(result, 3, []))
+
+
+def test_extra_follows_the_same_quantity_rules():
+    bad = [make_extra(quantity=None), make_extra(name="feta", quantity=1, unit="to_taste")]
+    assert len(validate_result(make_result(extra_ingredients=bad), 3, LISTED)) == 2
+
+
+def test_extra_needs_a_name():
+    result = make_result(extra_ingredients=[make_extra(name="  ")])
+    assert any("name" in p for p in validate_result(result, 3, LISTED))
 
 
 def test_keyword_table_only_uses_allowed_cuisines():
@@ -213,6 +274,14 @@ def test_augment_recipe_retries_once_with_problems_and_sums_tokens():
     assert record["status"] == "ok" and record["attempts"] == 2
     assert record["input_tokens"] == 200 and record["output_tokens"] == 100
     assert "positions" in client.requests[1]["messages"][0]["content"]
+
+
+def test_augment_recipe_retries_when_an_extra_repeats_a_listed_name():
+    bad = make_result(extra_ingredients=[make_extra(name="eggs")])
+    client = FakeClient([bad, make_result()])
+    record = augment_recipe(client, make_recipe(recipe_key="k1"))
+    assert record["status"] == "ok" and record["attempts"] == 2
+    assert "already" in client.requests[1]["messages"][0]["content"]
 
 
 def test_augment_recipe_fails_after_two_bad_answers():
