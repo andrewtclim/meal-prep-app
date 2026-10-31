@@ -19,18 +19,13 @@ depends_on: str | Sequence[str] | None = None
 
 # Copied from pipelines/foodcom/augment.py on purpose. A migration is a snapshot of
 # what was done on one day, so it must not import code that can change later.
+# Cuisines are not seeded here: the list is still changing (DECISIONS #26), so a
+# later revision seeds them once it is final. Units are stable.
 UNITS = [
     "g", "kg", "ml", "l",
     "tsp", "tbsp", "cup", "fl_oz", "oz", "lb",
     "piece", "clove", "slice", "can", "package", "bunch", "pinch", "dash",
     "to_taste",
-]  # fmt: skip
-
-CUISINES = [
-    "american", "italian", "mexican", "chinese", "indian", "thai", "japanese",
-    "korean", "vietnamese", "greek", "mediterranean", "middle_eastern",
-    "french", "spanish", "german", "british_irish", "caribbean", "african",
-    "cajun_creole", "other",
 ]  # fmt: skip
 
 
@@ -42,9 +37,12 @@ def upgrade() -> None:
        recipes use the same table and have no source id, steps, or times.
        source_ref is unique so the later upsert (ON CONFLICT) can tell a
        recipe it has already loaded from a new one.
-    3. Create the recipe_cuisine junction table (recipes can have 1 to 3 cuisines).
-    4. Seed the units and cuisines lookup rows. They are the closed lists the LLM
-       may answer with (DECISIONS #26), so every answer maps to an id.
+    3. Create the recipe_cuisine junction table (recipes have 1 or 2 cuisines).
+    4. Add recipe_ingredient.is_extra: true for ingredients the LLM found in the
+       steps that the source list lacks (DECISIONS #26). Existing and user-saved
+       rows are listed ingredients, so the default is false.
+    5. Seed the units lookup rows, the closed list the LLM may answer with, so
+       every answer maps to an id.
     """
     op.execute("CREATE SCHEMA IF NOT EXISTS raw")
 
@@ -53,6 +51,11 @@ def upgrade() -> None:
     op.add_column("recipes", sa.Column("total_minutes", sa.Integer))
     op.add_column("recipes", sa.Column("servings", sa.Integer))
     op.create_unique_constraint("uq_recipes_source_ref", "recipes", ["source_ref"])
+
+    op.add_column(
+        "recipe_ingredient",
+        sa.Column("is_extra", sa.Boolean, nullable=False, server_default=sa.false()),
+    )
 
     op.create_table(
         "recipe_cuisine",
@@ -64,9 +67,7 @@ def upgrade() -> None:
     # the rows itself. Hand-picked ids would leave its counter behind and the next
     # insert would collide.
     units = sa.table("units", sa.column("unit_name", sa.Text))
-    cuisines = sa.table("cuisines", sa.column("cuisine_name", sa.Text))
     op.bulk_insert(units, [{"unit_name": name} for name in UNITS])
-    op.bulk_insert(cuisines, [{"cuisine_name": name} for name in CUISINES])
 
 
 def downgrade() -> None:
@@ -78,11 +79,10 @@ def downgrade() -> None:
     # Only the seeded names are deleted, so rows added later by hand are kept.
     # If a recipe_ingredient row still points at a unit, this fails on purpose.
     units = sa.table("units", sa.column("unit_name", sa.Text))
-    cuisines = sa.table("cuisines", sa.column("cuisine_name", sa.Text))
-    op.execute(sa.delete(cuisines).where(cuisines.c.cuisine_name.in_(CUISINES)))
     op.execute(sa.delete(units).where(units.c.unit_name.in_(UNITS)))
 
     op.drop_table("recipe_cuisine")
+    op.drop_column("recipe_ingredient", "is_extra")
 
     op.drop_constraint("uq_recipes_source_ref", "recipes", type_="unique")
     op.drop_column("recipes", "servings")
