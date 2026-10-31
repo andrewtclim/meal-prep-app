@@ -112,6 +112,102 @@ flowchart LR
 - To write in this PR: DECISIONS #27 (Proposed) for the `transforms` group and the choices above, and CONCEPTS entries for dbt, seed (lookup) data, and identity columns.
 - CONCEPTS (existing): [Database migration (Alembic)](../docs/CONCEPTS.md#database-migration-alembic), [Junction table](../docs/CONCEPTS.md#junction-table), [Deterministic vs idempotent pipelines](../docs/CONCEPTS.md#deterministic-vs-idempotent-pipelines)
 
+## Session: 2026-10-31
+### What we worked on and why
+Andrew updated PR #18 after Paul's review, so we checked what changed and whether it affects the migration, then rebased our branch onto it. The plan for the rest of the day is to not wait for #17 and #18 to merge: build against data that is already committed.
+
+### What changed in PR #18 and what it means for us
+| Change in #18 | Effect on `feat/dbt-staging` |
+|---|---|
+| Cuisines grew from 20 to 90, at most 2 per recipe (DECISIONS #26 amendment) | The migration still seeds the old 20. The cuisine seeds wait for the final list; units are unchanged (19) |
+| New `extra_ingredients`: items the model finds in the steps that the ingredient list lacks | `recipe_ingredient` needs a flag to tell them apart (DATA_MODEL.md proposes `is_extra`), and stage 3 must normalize extras the same way as listed ones |
+| Saved results are keyed by `source_ref`, not `recipe_key` (raised in review) | `load.py` joins on `source_ref`. `recipe_key` is a position number that stage 1 can shift, so it must not be a join key. This matches the unique column we already added |
+| Thinking vs no-thinking still open | Only affects the paid full run, not our work |
+
+### Key idea: rebase
+A branch is a chain of commits. `git rebase feat/foodcom-augment` replays our two commits on top of Andrew's latest commit, so the history is one straight line (his commits, then ours) and a reviewer of our PR sees only our work. Our commit ids changed (`09f2bc6` to `88b220f`, `42dca71` to `610b53d`) because an id depends on the parent commit.
+- Alternative: `git merge`, which keeps history as it happened and adds a merge commit. Safer, noisier.
+- Rule: never rebase commits others already have, because it rewrites their ids and forces a `git push --force`. Safe here because the branch was local only.
+- If it goes wrong: `git rebase --abort`. If `uv.lock` conflicts, rerun `uv lock` instead of merging it by hand.
+- Result: clean rebase, no conflicts, `uv run pytest` gives 79 passed.
+
+### Working without waiting on #18
+Andrew committed real data in the new format under `pipelines/foodcom/pilot/`: `results_thinking.jsonl` (20 model answers with extras, cuisines and `source_ref`) and `stage1_rows.json` (the 20 matching cleaned recipes). That is enough to build and test `load.py` and the dbt models end to end. Only three things really wait on Andrew: the final cuisine list, the thinking verdict and budget, and any further change to his output format. To keep the later rebase onto `main` clean, we do not edit his files (`augment.py`, `clean.py`, his docs entries) and copy any list we need.
+
+Plan for the session, in order:
+1. Split the migration: schema now, seeds in a later revision. Add `recipe_ingredient.is_extra`.
+2. Apply the schema migration to Supabase and verify.
+3. Seed the 19 units now; cuisines in a later revision once the list is final.
+4. `load.py`: join the results and the cleaned recipes on `source_ref`, write `raw.foodcom_prepared`, test on the 20 pilot recipes.
+5. dbt project, connection and `sources.yml`.
+6. Staging models: `stg_recipes`, `stg_recipe_ingredients` (listed plus extras), `stg_recipe_cuisines`.
+7. dbt tests: unique and not-null `source_ref`, `accepted_values` for units and cuisines, relationships.
+8. Decide how the final upsert into `public` runs.
+9. DECISIONS #27, CONCEPTS entries, ROADMAP rows.
+
+Two PRs: A is the migration plus `load.py`, B is dbt.
+
+```mermaid
+flowchart LR
+  P[pilot/results_thinking.jsonl + stage1_rows.json: 20 real recipes] --> L[load.py, joins on source_ref]
+  L --> R[raw.foodcom_prepared]
+  R --> D[dbt staging models and tests]
+```
+
+### Step 1 done: the migration split and `is_extra`
+We edited `bd4767ab853b` (still unapplied, so editing is allowed) instead of adding a second file yet:
+- **Removed** the `CUISINES` list, the cuisine insert and its `downgrade()` delete. The cuisine list is still changing (90 labels in #18, open in DECISIONS #26), and a seed baked into an applied migration can't be edited. A later revision seeds the final list. A comment in the file says so.
+- **Kept** the 19 units seed, since that list is unchanged.
+- **Added** `recipe_ingredient.is_extra`.
+- Fixed the docstring (`recipe_cuisine` now says 1 or 2 cuisines, matching `MAX_CUISINES = 2`).
+
+`alembic/versions/bd4767ab853b_...py`
+```python
+op.add_column(
+    "recipe_ingredient",
+    sa.Column("is_extra", sa.Boolean, nullable=False, server_default=sa.false()),
+)
+```
+`is_extra` marks ingredients the LLM found in the steps that Food.com's list lacks (for example oil). The pantry check needs to know which rows are listed and which were inferred, because inferred ones are less certain. `NOT NULL DEFAULT false` is the truthful default: every existing row, and every user-saved recipe, is a listed ingredient, and a three-valued boolean (true, false, null) would force every query to handle null. Tradeoff: a flag column is cheaper than a separate table, but it mixes two kinds of row in one table, so any query that must not count extras has to filter on it.
+
+**What `is_extra` means, with a real row.** Food.com's ingredient list is often incomplete (about 75% of recipes have more quantities than names). Andrew's step has the model read the steps and add items the list lacks. Both kinds become rows in `recipe_ingredient`, and `is_extra` tells them apart because a listed ingredient came from the recipe author (reliable) while an extra was inferred by a model (usually right, sometimes invented). Real example from `pipelines/foodcom/pilot/results_thinking.jsonl`, `source_ref` 47403, "Black Pepper Pork with Ramen Noodles". The source list has five items and no noodles, although the title and the steps ("cook noodles in 2 qts boiling water") use them:
+
+| Ingredient | Amount | `is_extra` | Where it came from |
+|---|---|---|---|
+| boneless pork chop | 1 lb | false | Food.com list |
+| garlic | 2 clove | false | Food.com list |
+| onion | 1 piece | false | Food.com list |
+| broccoli florets | 2 cup | false | Food.com list |
+| black pepper | to taste | false | Food.com list |
+| ramen noodles | 1 package | **true** | model, from the steps |
+| vegetable oil | 2 tbsp | **true** | model, from the steps |
+| stir-fry sauce | 2 tbsp | **true** | model, from the steps (steps say "Stir-Fry Sauce") |
+| sesame oil | to taste | **true** | model, from the steps |
+
+The app can then show "also needs vegetable oil" without a plan depending on it, and a query that must not count inferred items can use `WHERE NOT is_extra`. The cost is that any such query has to remember the filter.
+
+Checked without touching the database: `alembic upgrade fe3310413886:bd4767ab853b --sql` and the matching `downgrade --sql` both print the expected statements, and `ruff` passes. Not applied to Supabase yet. Applying changes the live database, so Paul runs `uv run alembic upgrade head` after reading the SQL.
+
+### Applied to Supabase (Paul ran `uv run alembic upgrade head`)
+No errors. Verified with read-only queries against the live database:
+
+| Check | Result |
+|---|---|
+| `alembic_version` | `bd4767ab853b` |
+| `raw` schema | exists |
+| `recipes` columns | `source_ref` bigint, `instructions` text, `total_minutes` integer, `servings` integer, all nullable |
+| `uq_recipes_source_ref` | exists |
+| `recipe_ingredient.is_extra` | boolean, `NOT NULL`, default `false` |
+| `recipe_cuisine` | exists |
+| `units` / `cuisines` rows | 19 / 0 (cuisines wait for the final list) |
+
+Because this revision is now applied, it is frozen: any change goes in a new revision (the cuisine seeds will be one).
+
+### Decisions and concepts
+- Process decision: build against the committed pilot data instead of waiting for #18 to merge.
+- Decided: `is_extra` is `NOT NULL DEFAULT false` (see above).
+- DATA_MODEL.md still says the flag is "proposed, not created yet"; update it in the PR that applies this migration.
+- CONCEPTS (to write in this PR): rebase vs merge, join on a stable key (`source_ref` vs a position number).
 ## What we'd explain differently next time
 - The word "raw" is misleading here. It suggests untouched source data, but our `raw` holds prepared data (cleaned recipes plus LLM answers). Read DECISIONS #24 before assuming otherwise.
 - Why the migration copies the lists instead of importing them, and why hardcoded ids break an identity column. Both were first-draft mistakes worth remembering.
