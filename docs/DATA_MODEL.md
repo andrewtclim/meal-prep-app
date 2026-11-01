@@ -6,7 +6,7 @@
 
 | Store | Role | Rebuildable? |
 |---|---|---|
-| Postgres `raw` schema | Untouched source data from pipelines (DECISIONS #14) | Yes, by re-pulling sources |
+| Postgres `raw` schema | Source data from pipelines (DECISIONS #14). For Food.com it holds the prepared data (cleaned recipes plus LLM answers) in `raw.foodcom_prepared`, not the untouched file (DECISIONS #24, #27) | Yes, by rerunning `load.py` from the local files |
 | Postgres (Supabase) | System of record for all entities, user data, conversations, and embeddings (pgvector) | No, back it up |
 | Neo4j | Relationships: substitutions, recipe ingredients, prep tasks, store categories | Yes, rebuilt from Postgres by the ingestion job |
 | External APIs (Google Places) | Query-time only, never stored beyond what their terms allow | n/a |
@@ -19,7 +19,7 @@
 |---|---|---|
 | Users | users, cuisines, user_cuisine, allergens, user_allergen, user_events | Profile: name, city, budget, cuisine preferences, allergens. `user_events` is activity (views, saves) |
 | Pantry | user_pantry | What the user has now, linked to `ingredient_id` |
-| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion. Food.com recipes give `recipe_ingredient` two kinds of row: listed ingredients and LLM-found extras (DECISIONS #26), so the table needs a flag (proposed: `is_extra`) and both kinds go through the same ingredient normalization. Not created yet |
+| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion. Food.com recipes give `recipe_ingredient` two kinds of row: listed ingredients and LLM-found extras (DECISIONS #26), so `recipe_ingredient.is_extra` (`NOT NULL DEFAULT false`) marks the inferred ones, and both kinds go through the same ingredient normalization. `recipes` also carries `source_ref` (unique, nullable), `instructions`, `total_minutes` and `servings`, and `recipe_cuisine` links recipes to cuisines (DECISIONS #27) |
 | Embeddings | recipe embeddings, ingredient embeddings (pgvector) | Recipe embeddings power semantic search. Ingredient embeddings are the substitution model's output |
 | Plans | meal_plans, plan_items | A week's approved plan and what's cooked each day |
 | Conversations | conversations, messages | Our own transcript tables. `conversations.thread_id` matches the LangGraph thread |
@@ -62,7 +62,7 @@
 
 | Pipeline | Source | Lands in `raw` | Transforms into | Schedule |
 |---|---|---|---|---|
-| Recipe ingestion | Open recipe dataset | raw recipes | recipes, ingredients, recipe_ingredients, prep_tasks, recipe embeddings | Batch, rerun as needed |
+| Recipe ingestion | Open recipe dataset | `raw.foodcom_prepared` | recipes, ingredients, recipe_ingredients, prep_tasks, recipe embeddings | Batch, rerun as needed |
 | USDA nutrients | USDA FoodData Central | raw nutrients | ingredient nutrient features | On new USDA releases |
 | FDA recalls | openFDA food enforcement API | raw recalls | recalls, recall_ingredient_matches | Scheduled, incremental by watermark |
 | Graph sync | Postgres clean tables | n/a | Neo4j nodes and edges | After recipe or scoring changes |

@@ -34,8 +34,8 @@
 | First Postgres migrations: users, pantry, recipes, ingredients, recipe_ingredients | must | Paul | done (PR #13 merged): Alembic migrations for the 14 ER diagram tables (six core tables plus preferences, ratings, events) |
 | Food.com stage 1: `clean.py` (clean, dedupe, size funnel) | must | Andrew | done: 212,846-recipe subset (DECISIONS #25) |
 | Food.com stage 2: `augment.py` (LLM units, quantities, cuisines) | must | Andrew | in progress: code and a 3-recipe test done (DECISIONS #26); pilot of 200 and budget agreement next |
-| Create `raw` schema, load the prepared Food.com data into it (source file stays local, DECISIONS #24) | must | | |
-| Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | | |
+| Create `raw` schema, load the prepared Food.com data into it (source file stays local, DECISIONS #24) | must | Paul | in progress (DECISIONS #27): migration applied and `load.py` loads the 20-recipe pilot; the full load waits on PR #18 and the budget agreement |
+| Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | Paul | in progress: dbt installed in a `transforms` group; project, models and tests next |
 | `pipeline_runs` log table | should | | |
 | Ingredient name normalization v1 | must | | |
 | Draft DATA_MODEL.md cross-store details | should | | |
@@ -72,3 +72,4 @@ _One line per change: date, what changed, why. Link a DECISIONS entry if one was
 - 2026-10-07: Chose GCP as cloud provider (DECISIONS #10); Terraform scaffold landed under `infra/`.
 - 2026-10-17: Switched Python dependencies from the proposed conda env (PR #7) and pinned requirements to uv with a lockfile (DECISIONS #22).
 - 2026-10-25: Recipe load changed to clean, then LLM augment, then dbt and upsert; the untouched source file stays local; subset set to 212,846 recipes (DECISIONS #23 to #25).
+- 2026-10-31: Stage 3 split by tool: Alembic builds the tables, `load.py` replaces `raw.foodcom_prepared`, dbt transforms, the final write into `public` is an upsert; cuisine seeds wait for the final list (DECISIONS #27).

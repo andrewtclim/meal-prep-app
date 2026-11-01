@@ -341,7 +341,15 @@ With a file that has two lines for `source_ref` 47403 (an older and a newer answ
 
 Sample rows: 47403 "Black Pepper Pork with Ramen Noodles" has 5 listed ingredients and 4 extras, cuisine `chinese`; 71222 "Mama's Lasagna" has 8 and 2 extras, `italian`; 14296 "Cherokee Casserole" has 11 and 2 extras, `native_american` and `american`. Also, 30525 (smoked salmon rolls) got `other`, a reminder that the model's cuisine labels still need the hand check.
 
+### Docs updated for this PR (CLAUDE.md: docs change in the same PR as the code)
+- **DECISIONS #27 (Proposed):** stage 3 split by tool. Alembic creates the schema, columns, `is_extra`, `recipe_cuisine` and the units; `load.py` replaces `raw.foodcom_prepared` (loader owns that table); dbt is in a `transforms` group; the final write into `public` is an upsert because other tables will reference `recipe_id`. Open inside it: how the upsert runs, and real ingredient-name normalization.
+- **DATA_MODEL.md:** `is_extra`, the new `recipes` columns and `recipe_cuisine` are now created (the text said "not created yet"); `raw` for Food.com holds prepared data, not the untouched file.
+- **ROADMAP.md:** the `raw` load row and the dbt row are Paul's and in progress, plus a Replans line.
+- **CONCEPTS.md:** [Seed (lookup) data in a migration](../docs/CONCEPTS.md#seed-lookup-data-in-a-migration), [Identity column](../docs/CONCEPTS.md#identity-column), [jsonb](../docs/CONCEPTS.md#jsonb), [Full replace vs upsert](../docs/CONCEPTS.md#full-replace-vs-upsert), [Git rebase vs merge](../docs/CONCEPTS.md#git-rebase-vs-merge). The dbt entry waits for PR B, when the first model exists.
+- Numbering risk: #27 is the next free number on this branch; if Andrew's PR also adds one, renumber ours before merging.
+
 ### Decisions and concepts
+- DECISIONS #27 (Proposed), see above.
 - Process decision: build against the committed pilot data instead of waiting for #18 to merge.
 - Decided: full replace for `raw`, `jsonb` for the answer, loader owns the raw table.
 - CONCEPTS (to write in this PR): upsert / idempotent load.
