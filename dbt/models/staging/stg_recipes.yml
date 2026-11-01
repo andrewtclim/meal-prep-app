@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: stg_recipes
+    description: >
+      One row per Food.com recipe, a thin view over raw.foodcom_prepared.
+      Lists from the LLM answer are still jsonb here; they become rows in
+      the intermediate models.
+    columns:
+      - name: source_ref
+        description: Food.com's own recipe id.
+        data_tests:
+          - unique
+          - not_null
+      - name: ingredient_parts
+        description: >
+          Ingredient names as Food.com wrote them, in order. The LLM answer
+          refers to them by position, so the intermediate model needs both.
+        data_tests:
+          - not_null
+      - name: cuisines_json
+        description: List of cuisine names from the LLM answer.
+        data_tests:
+          - not_null
+      - name: ingredients_json
+        description: List of {position, quantity, unit} objects from the LLM answer.
+        data_tests:
+          - not_null

@@ -389,6 +389,18 @@ Lessons: replace every placeholder, with no angle brackets or quotes; the value 
 
 **Step: `dbt/models/staging/sources.yml`.** A source tells dbt about a table it did not build, here `raw.foodcom_prepared`, written by `load.py`. Declaring it lets models read it with `{{ source('raw', 'foodcom_prepared') }}` instead of a hardcoded name, so dbt can show where data comes from, rename the table in one place, and test the source itself. In the file, `name: raw` is the source's name (first argument of `source()`), `schema: raw` is the database schema (same word, separate setting), each entry under `tables:` is the second argument, `description` is documentation dbt can render, and `data_tests` are checks run by `dbt test` (`unique` and `not_null` on `source_ref`, `not_null` on `answer`). The tests repeat what the primary key enforces, but on the table as dbt sees it, and a test is what keeps failing visibly if the table is ever recreated without that constraint.
 
+**`sources.yml`, explained simply.** A source is a table dbt did not build (`raw.foodcom_prepared` was made by `load.py`), and `sources.yml` introduces it. Kitchen picture: a model is a dish, a source is an ingredient delivered from outside, and `sources.yml` is the delivery list. Why not hardcode `raw.foodcom_prepared` in SQL: the name would be repeated in every model; with `{{ source('raw', 'foodcom_prepared') }}` a rename is one change, dbt can draw where data comes from, and it can test the source itself.
+- `version: 2` is the file format, never changes.
+- `name: raw` is the source's label (first word in `source('raw', ...)`); `schema: raw` is the real database schema. Same word, separate settings: a source named `food_data` with `schema: raw` would be read as `source('food_data', ...)` and still come from the `raw` schema.
+- Each entry under `tables:` is a real table name and the second word in `source()`.
+- `description` is documentation only; dbt can render it as a website. `>` starts a paragraph that continues on the next lines.
+- `data_tests` under a column: `unique` and `not_null` run with `dbt test`. dbt writes a `SELECT` that finds rows breaking the rule and the test fails if it finds any. `source_ref` is already a primary key, but the test still matters: if the table is ever recreated without the key, the database stops protecting us and the test fails visibly; it also documents the rule and will run in CI.
+Nothing builds from a source alone; it matters when `stg_recipes.sql` uses it and when `dbt test` runs.
+
+**Too many matching names, and the fix.** Paul asked why the same words keep appearing as labels. The reuse is real: `raw` was the source label, the schema in `sources.yml`, the first word of `source('raw', ...)` and the Postgres schema itself; `staging` is both a folder and a schema; `warehouse` is the connection. In dbt the folder, schema and label often line up on purpose, but while learning you cannot tell whether a word is a label we chose, a real database name or a folder. Rule of thumb for reading a dbt file: a name under `name:` is something we define; a name under `schema:`, a table or a file name is a real thing in the database or on disk; a name inside `{{ }}` is a reference to one of those. We gave the source label its own word: `name: foodcom`, `schema: raw`, table `foodcom_prepared`, so models read `{{ source('foodcom', 'foodcom_prepared') }}` and `raw` appears only where it is the real schema. `staging` stays, since folder and schema are meant to line up.
+
+**First `dbt parse` on the project.** `dbt parse` reads every file and reports mistakes without touching the database. It passed; the only warning was `models.recipe_transforms.staging` having nothing to apply to, which is expected until the first model exists. The `sources.yml` file did not exist when first asked about: the content had been shown in chat but not created. A file shown in chat is not a file on disk; check with `git status` or the file tree.
+
 ### Docs updated for this PR (CLAUDE.md: docs change in the same PR as the code)
 - **DECISIONS #27 (Proposed):** stage 3 split by tool. Alembic creates the schema, columns, `is_extra`, `recipe_cuisine` and the units; `load.py` replaces `raw.foodcom_prepared` (loader owns that table); dbt is in a `transforms` group; the final write into `public` is an upsert because other tables will reference `recipe_id`. Open inside it: how the upsert runs, and real ingredient-name normalization.
 - **DATA_MODEL.md:** `is_extra`, the new `recipes` columns and `recipe_cuisine` are now created (the text said "not created yet"); `raw` for Food.com holds prepared data, not the untouched file.
@@ -430,3 +442,38 @@ The list is explicit, not imported from `augment.py`, so bumping the version in 
 - Why the migration copies the lists instead of importing them, and why hardcoded ids break an identity column. Both were first-draft mistakes worth remembering.
 - We first read `DATABASE_URL` as empty. The check only printed the variable name, not its value, and `.env.example` really is empty, which made the mistake look right. When you check a secret, check its length or shape without printing it.
 - dbt does not load data. It only transforms what is already in Postgres, so a loader has to exist first.
+
+### Layers and how data gets into `public` (2026-11-01)
+
+**Layers.** At Paul's work dbt has staging, intermediate and mart. Here: staging (`stg_recipes`, a thin cleanup view) and intermediate (unpacking the jsonb lists into rows, matching names to `position`, normalizing ingredient names). No `marts/` folder yet, because our final tables are the app tables in `public`, which Alembic owns, not dbt.
+
+**Why not dbt incremental models for `public` (option 1).** dbt wants to own the table it writes (it would create it without constraints if missing); `--full-refresh` would drop `recipes` (and user-saved recipes with it); the default delete-then-insert strategy gives rows new ids and breaks anything that references them; `recipe_ingredient` needs ids from the parent insert, so dbt would read from and write to `public` at once; and the select must match the table's columns exactly. Leaning option 2: dbt stops at the intermediate layer and a short `INSERT ... ON CONFLICT` step writes to `public`. Open until the intermediate models exist; it will become a `DECISIONS.md` entry.
+
+**Why a view can be rebuilt but `recipes` cannot.** Nothing points at a view. `recipes` rows have a `recipe_id` stored in other tables, so delete-and-reinsert would give recipe 7 a new id and orphan or cascade-delete its ingredient rows. Upsert updates the row in place, so the id stays.
+
+**Why keep `recipe_id` when `source_ref` is already unique.** Using `source_ref` as the key would stop ids changing, but the delete would still be blocked or cascade, user-saved recipes have no `source_ref`, and a second source could reuse the same numbers. `recipe_id` is ours and never changes meaning; `source_ref` is the unique lookup key that `ON CONFLICT (source_ref)` uses to find the existing row.
+
+**Rule for `public`.** Tables other tables point at (`recipes`, `ingredients`, `units`, `cuisines`) are upsert only. Leaf tables (`recipe_ingredient`, `recipe_cuisine`) can be replaced per recipe, which also removes ingredients the LLM dropped, but only for Food.com recipes (rows with a `source_ref`), never user-saved ones.
+
+### First model: `stg_recipes` (2026-11-01)
+
+`dbt/models/staging/stg_recipes.sql` is a staging view over `raw.foodcom_prepared`: it renames `recipe_name` to `name` (the app's column name), passes the plain columns through, and uses `answer -> 'key'` to pull `cuisines`, `ingredients` and `extra_ingredients` out of the `answer` jsonb as `*_json` columns. It does not unpack lists into rows or clean names; that belongs to the intermediate layer.
+
+```sql
+answer -> 'cuisines' as cuisines_json,
+from {{ source('foodcom', 'foodcom_prepared') }}
+```
+
+`->` takes one key out of a jsonb object and returns its value as jsonb (here a list). A missing key returns `NULL` with no error, so a dropped key would flow silently into later models. `load.py`'s `validate_answer` is the first catch; a `not_null` dbt test on the `*_json` columns is the second (to add in `stg_recipes.yml`).
+
+**First `dbt run`.** `1 of 1 OK created sql view model staging.stg_recipes`, `PASS=1 ERROR=0`; the view appears in the `staging` schema in Supabase. The line "Unable to do partial parsing because saved manifest not found" is harmless: dbt caches its parsed project in `target/` and only reparses changed files; on a first run (or fresh clone/CI) there is no cache, so it does a full parse.
+
+Flow so far: `raw.foodcom_prepared` (written by `load.py`) -> `staging.stg_recipes` (view built by dbt).
+
+**Tests on the raw source passed.** `dbt test` ran the 3 tests from `sources.yml` (`unique` and `not_null` on `source_ref`, `not_null` on `answer`): `PASS=3`. A test is a query that selects bad rows; zero rows means pass. Test names read `source_<test>_<source label>_<table>_<column>`, which is another reason a clear source label (`foodcom`) helps.
+
+**Tests on the view.** `dbt/models/staging/stg_recipes.yml` adds `unique`/`not_null` on `source_ref` and `not_null` on `cuisines_json` and `ingredients_json`. The last two catch the silent-`NULL` case. YAML note: `data_tests: [unique, not_null]` and the dashed block list are the same thing; we use the block style everywhere because tests with arguments (like `accepted_values`) only fit in block form.
+
+**Which columns staging keeps.** `stg_recipes` takes only what downstream models need: the six recipe columns that map to `public.recipes`, `ingredient_parts`, and the three lists from `answer`. Left out: `keywords` (nothing in `public` uses it), `quantities_raw` (the LLM's `quantity`/`unit` replace it), `model` and `loaded_at` (load bookkeeping). `answer` only has three keys and we take all three.
+
+**A gap caught.** The LLM answer holds only `position`, `quantity`, `unit` per ingredient, so the ingredient names have to come from `ingredient_parts`, matched by position. The first draft of `stg_recipes` left that column out. We added it (with a `not_null` test) rather than letting the next model read `raw` directly, so that only staging touches `raw`.
