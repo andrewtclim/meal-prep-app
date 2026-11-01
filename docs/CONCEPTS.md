@@ -196,3 +196,15 @@
 - **Where we use it:** `feat/dbt-staging` was rebased onto `feat/foodcom-augment` (PR #18) so a reviewer sees only our work; it will be rebased again when #17 and #18 merge into `main`.
 - **Why this over the alternative:** A merge is safer and leaves old commits alone but makes the history noisier. `git rebase --abort` undoes a rebase that goes wrong; if `uv.lock` conflicts, rerun `uv lock` instead of merging it by hand.
 - **Common question:** Rebase or merge? Rebase your own unpushed work for a clean line; merge anything shared.
+
+### dbt (models, sources, tests)
+- **What it is:** A tool that turns SQL files into tables or views in the database and checks them. A *model* is one `select` in a `.sql` file; dbt wraps it in `create view` or `create table`. A *source* (`sources.yml`) names a table dbt did not build, read with `{{ source('label', 'table') }}`. A *test* is a query that selects bad rows; zero rows means pass. `{{ ref('model') }}` reads another model and tells dbt to build that one first.
+- **Where we use it:** `dbt/models/staging/` (`sources.yml`, `stg_recipes.sql`, `stg_recipes.yml`), connection in `dbt/profiles.yml`, project settings in `dbt/dbt_project.yml`. Run with `dbt run`, `dbt test`, or `dbt build` (both, in order).
+- **Why this over the alternative:** Plain SQL scripts or Python would need us to write the run order, the view creation and the checks ourselves. dbt works the run order out from `ref()`/`source()` and keeps the tests next to the models. The tradeoff is one more tool to learn, and dbt wants to own the tables it writes, so the final upsert into `public` (owned by Alembic) stays outside it (DECISIONS #27).
+- **Common question:** Why a view and not a table for staging? Nothing is stored twice, and the raw table is small and reloaded often.
+
+### Staging and intermediate layers
+- **What it is:** A way to split transformation work. Staging models are thin: one per source table, renaming and retyping only. Intermediate models do the real reshaping (unpacking lists into rows, cleaning names). Later models read from staging, never from the raw table.
+- **Where we use it:** `stg_recipes` in `dbt/models/staging/`; intermediate models come next. No `marts/` layer, since our final tables are the app tables in `public`.
+- **Why this over the alternative:** If a model reads `raw` directly, a change in `raw` has to be fixed in every model. With a staging layer it is fixed once. The tradeoff is an extra hop for small projects.
+- **Common question:** What goes in staging and what goes in intermediate? Staging renames and retypes; anything that changes meaning goes in intermediate.
