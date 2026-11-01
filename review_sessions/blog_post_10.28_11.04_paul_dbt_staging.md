@@ -6,7 +6,8 @@ Started stage 3 of the Food.com pipeline: loading the cleaned and LLM-augmented 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
-| (pending) `feat/dbt-staging` | dbt dependency, then migration, `load.py`, staging models | Not pushed yet. Branched from `feat/foodcom-augment` (PR #18), so it also shows #17 and #18 until they merge |
+| [#20](https://github.com/andrewtclim/meal-prep-app/pull/20) | Migration (`raw` schema, recipe source columns, `is_extra`, `recipe_cuisine`, units), `load.py` with tests, dbt dependency, DECISIONS #27 and docs | Open. Base is `feat/foodcom-augment` (PR #18), so the diff shows only this work; change the base to `main` after #17 and #18 merge |
+| (next) dbt project | `dbt_project.yml`, profile, `sources.yml`, staging models and tests, the upsert | Not started |
 
 ## Session: 2026-10-29
 ### What we worked on and why
@@ -340,6 +341,53 @@ With a file that has two lines for `source_ref` 47403 (an older and a newer answ
 | `loaded_at` | filled in by the database, identical across rows because one transaction wrote them |
 
 Sample rows: 47403 "Black Pepper Pork with Ramen Noodles" has 5 listed ingredients and 4 extras, cuisine `chinese`; 71222 "Mama's Lasagna" has 8 and 2 extras, `italian`; 14296 "Cherokee Casserole" has 11 and 2 extras, `native_american` and `american`. Also, 30525 (smoked salmon rolls) got `other`, a reminder that the model's cuisine labels still need the hand check.
+
+### PR #20 opened, then PR B1: the dbt project (branch `feat/dbt-project`, stacked on #20)
+PR #20 is open as a draft with base `feat/foodcom-augment`. gh is not logged in on this machine and the repo page could not be fetched, so we checked what CI runs locally instead: `ruff` clean, 86 tests pass, `uv lock --check` clean. PR B is split in two: B1 is the project files plus `stg_recipes` and its tests, B2 is the ingredient and cuisine models and then the upsert. The difficulty by piece: project files easy, `stg_recipes` easy, unpacking the JSON into one row per ingredient medium, tests easy, the upsert hard (a design choice first), dbt in CI medium.
+
+**`dbt/dbt_project.yml`, line by line.** The project's front page: what it is called, which connection to use, where the SQL lives and what to do with it.
+```yaml
+name: warehouse
+version: "0.1.0"
+profile: warehouse
+model-paths: ["models"]
+models:
+  warehouse:
+    staging:
+      +materialized: view
+```
+- `name`: a generic label, so the app name is not in module names (DECISIONS #13). `version` is required by dbt and unused.
+- `profile`: a pointer to the connection named `warehouse` in `profiles.yml`; the connection details are not in this file. A missing profile stops dbt loudly.
+- `model-paths`: where the model files live (`dbt/models/`). A model is one `.sql` file holding one `SELECT`.
+- The `models:` block reads like a path: settings for models, in the project named `warehouse` (matches `name:`, not the profile), in the folder `models/staging/` (matches the folder), build as a view. A `+` marks a dbt setting and not a folder. If `name:` changed but `models: warehouse:` did not, dbt would only warn about unused config and the settings would silently stop applying; a wrong profile name fails loudly.
+- A view is a saved query that holds no data of its own, so it takes no space (the free tier is tight, DECISIONS #25). Staging models are just a cleaned lens on `raw`. The tradeoff is the query reruns on every read.
+
+**`dbt/profiles.yml` and the double curly brackets.** The profile `warehouse` is the connection that `profile: warehouse` points to; dbt's Postgres adapter does not accept a `DATABASE_URL`, so the host, port, user, password and database name come from five variables (`DBT_HOST`, `DBT_PORT`, `DBT_USER`, `DBT_PASSWORD`, `DBT_DBNAME`) set in the git-ignored `.env`. The user on Supabase's pooler is `postgres.<project-ref>`, not just `postgres`. `schema: staging` is where dbt builds the views; dbt creates it if missing.
+
+The `{{ ... }}` is Jinja, the templating language dbt uses: dbt runs the code inside and substitutes the result before reading the file. `host: "{{ env_var('DBT_HOST') }}"` becomes the real host. `env_var('DBT_PORT', '5432')` takes a default as its second argument. `| as_number` is a Jinja filter (the `|` passes a value to a function): environment variables are text and the port must be a number. The quotes are YAML's. The same brackets appear in SQL models: `{{ source('raw', 'foodcom_prepared') }}` becomes the real table name, and `{{ ref('stg_recipes') }}` names another model and tells dbt to build it first. A second kind, `{% ... %}`, holds logic such as `{% if %}` and `{% for %}`. Why dbt does this: it lets a file hold values that change (a secret, a table name) without hardcoding them, which is also why `profiles.yml` is safe to commit: it contains the names of the variables, not their values.
+
+**Renaming the project (a mistake worth keeping).** Paul changed `name:` in `dbt_project.yml` to `meal-prep-app`. Three problems: dbt project names may contain only letters, digits and underscores, so hyphens are likely rejected (`meal_prep_app` would be valid); the `models:` block still said `warehouse:`, and since that key must equal `name:`, dbt would silently stop applying the `staging` settings; and DECISIONS #13 says to keep the app name out of package and module names so a rename is cheap (`meal-prep-app` is the repo name, not the app name). The `profile:` line is a separate pointer to `profiles.yml` and is unaffected. Fix: keep `name: warehouse`, or rename in both `name:` and the `models:` key with underscores.
+
+Tested instead of guessed, with `dbt parse` on a throwaway copy in `/tmp` (dummy connection variables, repo untouched). With `name: meal-prep-app` dbt refuses to start: `at path ['name']: 'meal-prep-app' does not match '^[^\d\W]\w*$'`, a name must start with a letter or underscore and then use only letters, digits and underscores. With `name: meal_prep_app` and `models: warehouse:` unchanged, dbt parses but only warns: `Configuration paths exist in your dbt_project.yml file which do not apply to any resources. ... - models.warehouse.staging`. That is the quiet failure: the build would run but `+materialized: view` would apply to nothing, so a rename must change `name:` and the `models:` key together. Lesson: when unsure whether a tool accepts something, run it on a copy and read the message.
+
+**First `dbt debug` run: two errors, two causes.** `dbt debug` is dbt's "does it work" check: it validates `dbt_project.yml`, validates `profiles.yml` and then really connects to the database.
+1. `dbt_project.yml [ERROR invalid]`: the name was still `meal-prep-app` (hyphens are not allowed).
+2. `could not translate host name "<the host part>" to address`: the five `DBT_` lines in `.env` still held the stand-in text from the instructions, `<the host part>` and so on. The angle brackets are also why uv warned `Failed to parse environment file ... at position 5`. The error message itself showed the placeholder, which is how we spotted it; a quick check (length of each value and whether it still contains `<` or `>`, without printing any secret) confirmed it for `DBT_HOST`, `DBT_USER` and `DBT_PASSWORD`.
+Lessons: replace every placeholder, with no angle brackets or quotes; the value for `DBT_PASSWORD` must be the real password and not the URL-encoded form that appears inside `DATABASE_URL` (`%40` is `@`); `dbt debug` prints the host and user, so read the output before sharing it. The profile part passed (`profiles.yml file [OK found and valid]`), so the structure of the file was right.
+
+**Second `dbt debug` run: connection works.** After replacing the placeholders, `Connection test: [OK connection ok]`: dbt reached Supabase through the pooler with the five `DBT_` variables. One check still failed, the same name error (`name: meal-prep-app`), which is a project file problem and not a connection problem. `dbt debug` checks each thing separately, so one failure does not hide the others; read all the lines, not just the last. The output shows the Supabase project ref inside the user name. It is an identifier and not a password, but worth a glance before sharing output.
+
+**Naming decision: project `recipe_transforms`, connection `warehouse`.** Paul pointed out that using `warehouse` for both the project name and the profile name is confusing, and he is right: they are two different things (the project is the folder of SQL and settings, the profile is the database connection) that only matched because we typed the same word twice. The rules are: the project name uses only letters, digits and underscores; `name:` and the key under `models:` are the same word; `profile:` matches the top key in `profiles.yml`. So the two names can differ freely. Chosen: `name: recipe_transforms` (and `models: recipe_transforms:`), which says what the project does and keeps the app name out (DECISIONS #13), and the connection stays `warehouse`. The alternative was to rename the connection (for example `supabase`) in `profile:` and the top key of `profiles.yml`.
+
+**Why `--project-dir dbt --profiles-dir dbt`.** By default dbt looks for `dbt_project.yml` in the current folder (and parents) and for `profiles.yml` in the current folder and then in a hidden `~/.dbt/`. Our project lives in a `dbt/` subfolder (DECISIONS #24) while commands run from the repo root (where `pyproject.toml` and `.env` are), so dbt would find nothing; the flags say where to look. Ways to avoid typing them: `cd dbt` (but then `.env` is `../.env`), `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` in `.env` (less obvious to teammates), or a wrapper such as a `Makefile` (one more file). We keep the explicit flags: nothing is hidden and CI can use the same command.
+
+**Files dbt writes that must stay out of git.** `dbt/.user.yml` (an anonymous id for dbt's usage statistics, created on the first command), `dbt/target/` (compiled SQL and run results), `dbt/logs/` and `dbt/dbt_packages/`. None hold secrets, but they are machine-specific and regenerated. Added to `.gitignore`. A check with `git status` found one more: dbt writes `logs/` relative to the folder it is run from, which is the repo root, so a stray `logs/` appeared there and needs its own `.gitignore` line (`target/` is relative to the project, so `dbt/target/` is right). `git check-ignore -v <path>` shows which rule ignores a path.
+
+**Same mistake again, caught by reading the file.** After renaming the project to `recipe_transforms`, the `models:` key still said `warehouse:`. dbt would only warn ("unused configuration paths") and `+materialized: view` would apply to nothing. Whenever `name:` changes, the `models:` key changes with it.
+
+**`dbt debug` passes: `All checks passed!`.** It validated the project file, the profile and a real connection. A pass does not mean everything is right: it did not catch the stale `warehouse:` key under `models:` (only a warning at parse time) or the untracked `logs/` folder. `git status` and reading the file did.
+
+**Step: `dbt/models/staging/sources.yml`.** A source tells dbt about a table it did not build, here `raw.foodcom_prepared`, written by `load.py`. Declaring it lets models read it with `{{ source('raw', 'foodcom_prepared') }}` instead of a hardcoded name, so dbt can show where data comes from, rename the table in one place, and test the source itself. In the file, `name: raw` is the source's name (first argument of `source()`), `schema: raw` is the database schema (same word, separate setting), each entry under `tables:` is the second argument, `description` is documentation dbt can render, and `data_tests` are checks run by `dbt test` (`unique` and `not_null` on `source_ref`, `not_null` on `answer`). The tests repeat what the primary key enforces, but on the table as dbt sees it, and a test is what keeps failing visibly if the table is ever recreated without that constraint.
 
 ### Docs updated for this PR (CLAUDE.md: docs change in the same PR as the code)
 - **DECISIONS #27 (Proposed):** stage 3 split by tool. Alembic creates the schema, columns, `is_extra`, `recipe_cuisine` and the units; `load.py` replaces `raw.foodcom_prepared` (loader owns that table); dbt is in a `transforms` group; the final write into `public` is an upsert because other tables will reference `recipe_id`. Open inside it: how the upsert runs, and real ingredient-name normalization.
