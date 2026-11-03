@@ -1,7 +1,7 @@
 # Week of 10.28 to 11.04: Fixing the incomplete ingredient list in the Food.com augment step (Andrew)
 
 ## Summary
-After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. We then ran a 20-recipe comparison of thinking on and off, built a notebook to review it, and fixed a result-key bug Paul found in review (PR #18). The thinking decision waits on both of us reading the notebook.
+After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. We then ran a 20-recipe comparison of thinking on and off, built a notebook to review it, and fixed a result-key bug Paul found in review (PR #18). Paul reviewed it (changes requested) and chose thinking; we then fixed the three things he asked for.
 
 ## PRs this week
 | PR | What it did | State |
@@ -118,7 +118,22 @@ Thinking off saves about 42%, but the two modes differ on 29% of ingredient entr
 
 We first made `review.csv` a 216-row file and the notebook too long. We redid it as a short review tool: one card per recipe (steps, ingredient table with the raw quantity beside each name, both answers with differences highlighted) and a small cell to set a verdict. The Cheesy Scalloped Corn Bake card showed a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps give no amounts.
 
-**Paul's review of PR #18** found a real bug: saved results were keyed on `recipe_key`, a position number that shifts if stage 1 changes. We now key on Food.com's `source_ref`, migrated the 240 saved records (0 mismatches), and corrected the docs. His second comment (the second cuisine is mostly filler) was true of the old prompt; after the prompt change only 1 of 20 thinking recipes and 6 of 20 no-thinking recipes had a second cuisine, so we kept the cap at 2 for now. Decision pending: both of us review `pilot/thinking_vs_no_thinking.ipynb`.
+**Paul's review of PR #18** found a real bug: saved results were keyed on `recipe_key`, a position number that shifts if stage 1 changes. We now key on Food.com's `source_ref`, migrated the 240 saved records (0 mismatches), and corrected the docs. His second comment (the second cuisine is mostly filler) was true of the old prompt; after the prompt change only 1 of 20 thinking recipes and 6 of 20 no-thinking recipes had a second cuisine, so we kept the cap at 2 for now. Decided after the review (see the next section): thinking.
+
+### Paul's review (2026-11-02): changes requested, and what we did
+Paul reviewed the PR and the notebook. He picked **thinking**: the no-thinking mode was fine on most recipes, but when it was wrong it was wrong by a lot (lemon juice `1 cup` instead of `1 tbsp`, parmesan `1 tbsp` for 2 lb of fava beans, basil `12 pieces` where the steps need about 36 tsp). My count-based comparison (29% of entries differ) hid the size of those errors. I had the opposite first impression from a quick skim; his specific examples changed my mind.
+
+| His request | What we did |
+|---|---|
+| Old-schema results would be skipped on resume | Every record now has a `schema_version` and a rerun only counts the current version as done. The 200 old pilot records are archived, and the 40 comparison records are stamped version 2 as the evidence he reviewed |
+| The second cuisine looks like filler | One `cuisine` per recipe. A small `CUISINE_PARENT` table in code adds the parent (cantonese gives chinese). I had justified two cuisines with "97 of 200 recipes used two", which was inflated by filler like `american`; his follow-up data (the modes disagreed on the first cuisine for 7 of 20) was the better evidence |
+| `package` is ambiguous (lasagna: `1 package` vs `1 lb`) | `package` is removed and the prompt says to give a weight for packaged goods. The other loose units (can, bunch, pinch, dash, piece) stay open for the team meeting |
+
+```python
+SCHEMA_VERSION = 3
+return {r["source_ref"] for r in records if r["status"] == "ok" and r.get("schema_version") == SCHEMA_VERSION}
+```
+The resume check asks not only "is this recipe saved?" but "was it saved under the current rules?", so changing the prompt or validator cannot leave stale answers mixed into the final data. A real 3-recipe check on version 3 ($0.0022) gave `lb` for the lasagna cheeses and `1 tbsp` for the lemon juice. Three recipes, one run each, so not proof. Still open: the backup of the results file, and recipes whose main ingredient appears only in the title (the corn bake).
 
 ## What we'd explain differently next time
 I wrote "the ingredient list is the anchor" as a design assumption while already holding the stage 1 number that only 22% of lists match the quantities, and did not ask what the extras were. The check cost nothing and took minutes. The habit to keep: when a join key looks tidy, compare it with a second signal on a sample before building on it.

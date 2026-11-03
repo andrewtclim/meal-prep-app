@@ -132,7 +132,7 @@
 
 ### Label granularity and near-neighbour confusion
 - **What it is:** How many classes a labeler has, and how finely they split. Too few and useful distinctions collapse into one label (filipino becomes `other`). Too many and near-neighbour labels (british and irish, szechuan and chinese) cover almost the same items, so the labeler picks between them almost at random and the data becomes inconsistent.
-- **Where we use it:** `CUISINES` and `MAX_CUISINES` in `pipelines/foodcom/augment.py` (90 labels, at most 2 per recipe). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
+- **Where we use it:** `CUISINES`, `CUISINE_PARENT` and `cuisine_path` in `pipelines/foodcom/augment.py` (90 labels, exactly 1 per recipe, with a parent table in code). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
 - **Why this over the alternative:** A short list is cheaper and more consistent but loses filters users want. A very long list is expressive but costs input tokens on every call (about +677 per call here) and splits the same dishes across labels. The confusion is a risk we have not measured yet: repeat the same recipes twice and count differing labels, then look at a confusion matrix on a hand-labelled sample.
 - **Common question:** How do you decide how many classes to use? Trade specificity against consistency, check a confusion matrix, and merge labels the evaluator cannot separate.
 
@@ -145,14 +145,14 @@
 
 ### Baseline for evaluation
 - **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
-- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
+- **Where we use it:** `baseline_cuisine` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
 - **Why this over the alternative:** Without a baseline, "the model tagged 100% of recipes" sounds good but says nothing about whether it is right. The tradeoff is that the baseline's labels are biased toward recipes whose uploader added a cuisine tag, so agreement with it does not prove accuracy on the other 84%.
 - **Common question:** Why compare a model to a baseline? To show it adds value over something simple, and to separate "covers more" from "is more correct".
 
 ### Append-only results file (resumable jobs)
 - **What it is:** Writing each finished result as one line to a file, flushed right away, and skipping already-finished keys on a rerun. A crash loses at most the call in flight.
 - **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `source_ref` (Food.com's own id).
-- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
+- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The same review added a `schema_version` to each record: a rerun only counts records made under the current prompt, schema and validator as done, because otherwise stale results from an earlier version would be silently kept and mixed with new ones. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
 - **Common question:** How do you make a long, paid job safe to rerun? Save results as you go under a stable key, and skip keys already saved.
 
 ### Environment file and .env.example
