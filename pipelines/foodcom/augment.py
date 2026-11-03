@@ -1,8 +1,8 @@
-"""Stage 2 of the Food.com pipeline: add quantities, units and cuisines with an LLM.
+"""Stage 2 of the Food.com pipeline: add quantities, units and a cuisine with an LLM.
 
 Reads data/interim/recipes_subset.parquet (stage 1 output). For each recipe the
 model reads the name, steps and raw ingredient lists and returns one structured
-record: a quantity and unit per ingredient, plus the cuisines. The dataset has
+record: a quantity and unit per ingredient, plus the cuisine. The dataset has
 no units at all, and its quantities line up with the ingredient list in only
 about 22% of recipes, so the text-reading step is unavoidable (DECISIONS #23).
 
@@ -39,6 +39,14 @@ MAX_OUTPUT_TOKENS = 4096
 EFFORT = "low"  # how hard the model thinks: low, medium, high (experiments in DECISIONS #26)
 THINKING_OFF = {"type": "disabled"}  # pass as thinking= to skip thinking tokens entirely
 
+# Stamped on every saved record. A rerun only counts records with THIS version as
+# done, so results made under older rules are redone instead of silently kept.
+# Bump it whenever SYSTEM_PROMPT, the output schema, UNITS, CUISINES, the validator
+# or MODEL changes in a way that would change an answer.
+#   1 = first pilot (20 cuisines, cap 3, no extras)
+#   2 = extras + 90 cuisines, cap 2 (the 20-recipe thinking comparison)
+#   3 = one cuisine per recipe, `package` removed from UNITS
+SCHEMA_VERSION = 3
 PILOT_SIZE = 200
 PILOT_SEED = 42
 # The thinking-versus-no-thinking comparison uses 20 recipes, split by how the raw
@@ -51,12 +59,14 @@ WORKERS = 8  # concurrent requests; the SDK retries rate-limit errors itself
 # Closed vocabularies. The model may only pick from these, so downstream code can
 # match on exact strings instead of cleaning "Tbsp.", "tbsp" and "tablespoon".
 # Metric and US cooking units, then counted things (a clove, a can) that have no
-# metric equivalent. "to_taste" is the unit for salt, pepper and garnishes where
+# metric equivalent. "package" was removed (Paul's review): its size varies by
+# product, so "1 package" and "1 lb" of the same noodles disagreed. Other loose
+# units (can, bunch, pinch, dash, piece) are still under review. "to_taste" is the unit for salt, pepper and garnishes where
 # no amount exists; its quantity is null.
 UNITS = [
     "g", "kg", "ml", "l",
     "tsp", "tbsp", "cup", "fl_oz", "oz", "lb",
-    "piece", "clove", "slice", "can", "package", "bunch", "pinch", "dash",
+    "piece", "clove", "slice", "can", "bunch", "pinch", "dash",
     "to_taste",
 ]  # fmt: skip
 
@@ -94,9 +104,26 @@ CUISINES = [
     "other",
 ]  # fmt: skip
 
-# Two is enough: in the 200-recipe pilot 97 recipes used two cuisines and only 3
-# used a third. Fewer slots also leaves less room for a filler second tag.
-MAX_CUISINES = 2
+# One cuisine per recipe (DECISIONS #26, 2026-11-02). A second slot was mostly filler
+# (american, other), and the two modes disagreed on the first cuisine for 7 of 20
+# recipes, so a second label added noise. The parent of a specific cuisine is added
+# by code from this table, not by the model, so "cantonese" still gives "chinese".
+# Only clear hierarchies are listed; no entry means no parent.
+CUISINE_PARENT = {
+    "cantonese": "chinese", "tex_mex": "mexican",
+    "swedish": "scandinavian", "norwegian": "scandinavian", "danish": "scandinavian",
+    "finnish": "scandinavian", "icelandic": "scandinavian",
+    "israeli": "middle_eastern", "palestinian": "middle_eastern", "iraqi": "middle_eastern",
+    "iranian": "middle_eastern", "syrian": "middle_eastern",
+    "moroccan": "african", "tunisian": "african", "ethiopian": "african",
+    "nigerian": "african", "south_african": "african",
+    "cuban": "caribbean", "puerto_rican": "caribbean", "jamaican": "caribbean",
+    "haitian": "caribbean",
+    "brazilian": "south_american", "peruvian": "south_american",
+    "argentine": "south_american", "chilean": "south_american",
+    "colombian": "south_american", "venezuelan": "south_american",
+    "ecuadorian": "south_american",
+}  # fmt: skip
 MAX_EXTRA_INGREDIENTS = 6  # cap on ingredients the model may add beyond the source list
 EXTRA_BANNED_NAMES = {"salt", "water"}  # often unlisted on purpose, so never an "extra"
 
@@ -140,10 +167,9 @@ def build_output_schema() -> dict:
     it is fewer output tokens (output costs 5x input) and cannot drift from the
     source spelling. Items the source list lacks go in `extra_ingredients`
     instead, keyed by name since they have no position. Enums come from UNITS
-    and CUISINES above, so the model cannot invent a unit. Length limits (one
-    entry per slot, at most MAX_CUISINES cuisines, at most
-    MAX_EXTRA_INGREDIENTS extras) are not expressed here; validate_result
-    checks them.
+    and CUISINES above, so the model cannot invent a unit or a cuisine. Rules the
+    schema cannot express (one entry per slot, at most MAX_EXTRA_INGREDIENTS
+    extras) are checked by validate_result.
     """
     return {
         "type": "object",
@@ -176,9 +202,9 @@ def build_output_schema() -> dict:
                     "additionalProperties": False,
                 },
             },
-            "cuisines": {"type": "array", "items": {"type": "string", "enum": CUISINES}},
+            "cuisine": {"type": "string", "enum": CUISINES},
         },
-        "required": ["ingredients", "extra_ingredients", "cuisines"],
+        "required": ["ingredients", "extra_ingredients", "cuisine"],
         "additionalProperties": False,
     }
 
@@ -200,8 +226,11 @@ Rules:
   amounts, but "2 cups flour" in the steps does).
 - Convert fractions to decimals (1/2 -> 0.5). If the source gives a range
   (2-3), use the midpoint.
-- Use a counted unit (piece, clove, slice, can, package, bunch) for things
+- Use a counted unit (piece, clove, slice, can, bunch) for things
   bought or used as whole items, such as eggs, garlic or canned tomatoes.
+- There is no "package" unit, because package sizes vary. For packaged goods
+  (pasta, cheese, tofu) give a weight in g, oz or lb from the size on the label or
+  a typical size, and use the recipe text to decide.
 - If no amount can be found and a sensible amount cannot be inferred (salt,
   pepper, garnish, "oil for frying"), use unit "to_taste" and quantity null.
   Only "to_taste" may have a null quantity.
@@ -215,13 +244,13 @@ Rules:
   * Do not repeat an ingredient that is already in the list.
   * At most {MAX_EXTRA_INGREDIENTS} extras. Return an empty array if nothing is missing.
   * Same quantity and unit rules as above, including to_taste with null.
-- cuisines: list up to {MAX_CUISINES} cuisines that best describe the dish, most
-  fitting first. Pick the most specific one you are confident in. A country or
-  region may be paired with its parent (chinese with cantonese), but do not list
-  two overlapping labels just to fill the second slot. For a country that is
-  not listed, use the closest umbrella label (african, middle_eastern,
-  south_american, scandinavian, caribbean) and use "other" only if none fit.
-  Do not use "american" as a default when the dish has no clear cuisine.
+- cuisine: the single cuisine that best describes the dish. Pick the most specific
+  one you are confident in (cantonese rather than chinese when the dish is clearly
+  Cantonese; the broader parent is added later, so do not name it too). For a
+  country that is not listed, use the closest umbrella label (african,
+  middle_eastern, south_american, scandinavian, caribbean) and use "other" only
+  if none fit. Do not use "american" as a default when the dish has no clear
+  cuisine.
 """
 
 
@@ -323,31 +352,34 @@ def validate_result(result: dict, n_ingredients: int, listed_names=()) -> list[s
         taken.add(name)
         problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
 
-    cuisines = result.get("cuisines", [])
-    if not 1 <= len(cuisines) <= MAX_CUISINES:
-        problems.append(f"expected 1 to {MAX_CUISINES} cuisines; got {len(cuisines)}")
-    if len(set(cuisines)) != len(cuisines):
-        problems.append("duplicate cuisines")
-
     return problems
 
 
-def baseline_cuisines(keywords, category) -> list[str]:
-    """Guess a recipe's cuisines from its Food.com keywords and category, no LLM.
+def baseline_cuisine(keywords, category) -> str | None:
+    """Guess a recipe's cuisine from its Food.com keywords and category, no LLM.
 
     Inputs: the recipe's keyword list and its single recipe_category value.
-    Output: up to MAX_CUISINES cuisines in CUISINES, in first-seen order, or an
-    empty list when no keyword names a cuisine (about 3 in 4 recipes). Free and
+    Output: the first cuisine in CUISINES that a keyword names (keywords first, then
+    the category), or None when none does (about 4 in 5 recipes). Free and
     deterministic, so it serves two jobs: a floor the LLM must beat, and a set of
     rough labels to sanity-check the LLM against. The labels are biased, though:
     they exist only for recipes whose uploader tagged a cuisine.
     """
-    found = []
     for term in [*keywords, category]:
         cuisine = CUISINE_KEYWORDS.get(str(term).strip().lower())
-        if cuisine and cuisine not in found:
-            found.append(cuisine)
-    return found[:MAX_CUISINES]
+        if cuisine:
+            return cuisine
+    return None
+
+
+def cuisine_path(cuisine: str) -> list[str]:
+    """Return the cuisine plus its parent, if the table has one: cantonese -> [cantonese, chinese].
+
+    The parent comes from CUISINE_PARENT, so it costs no tokens and cannot disagree
+    with the model. Stage 3 can use it to match "chinese" recipes to cantonese ones.
+    """
+    parent = CUISINE_PARENT.get(cuisine)
+    return [cuisine, parent] if parent else [cuisine]
 
 
 def build_request_params(
@@ -449,6 +481,7 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
         # saved result must never be matched on it.
         "source_ref": int(recipe["source_ref"]),
         "recipe_key": int(recipe["recipe_key"]),
+        "schema_version": SCHEMA_VERSION,
         "status": "failed" if problems else "ok",
         "attempts": attempt,
         "result": answer,
@@ -461,18 +494,25 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
     }
 
 
-def load_done_keys(path: Path) -> set[str]:
-    """Return the source_refs already stored with status "ok" (empty if no file).
+def load_done_keys(path: Path) -> set[int]:
+    """Return the source_refs already stored with status "ok" at the current version.
 
-    This is what makes a rerun safe: those recipes were already paid for, so they
-    are skipped. Keyed on Food.com's source_ref, which does not change when stage 1
-    is edited, unlike the position-based recipe_key. Failed records are not counted as done, so a rerun retries them.
+    This is what makes a rerun safe: those recipes were already paid for under the
+    current rules, so they are skipped. Keyed on Food.com's source_ref, which does
+    not change when stage 1 is edited, unlike the position-based recipe_key.
+    Failed records are not counted, so a rerun retries them. Records with a
+    different or missing schema_version are not counted either: they were made
+    under older rules, and silently keeping them would mix formats in the final data.
     """
     if not path.exists():
         return set()
     with path.open() as f:
         records = (json.loads(line) for line in f if line.strip())
-        return {r["source_ref"] for r in records if r["status"] == "ok"}
+        return {
+            r["source_ref"]
+            for r in records
+            if r["status"] == "ok" and r.get("schema_version") == SCHEMA_VERSION
+        }
 
 
 def append_record(path: Path, record: dict) -> None:

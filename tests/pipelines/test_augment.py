@@ -8,19 +8,21 @@ import pytest
 import pipelines.foodcom.augment as augment_module
 from pipelines.foodcom.augment import (
     CUISINE_KEYWORDS,
+    CUISINE_PARENT,
     CUISINES,
-    MAX_CUISINES,
     MAX_EXTRA_INGREDIENTS,
     MODEL,
+    SCHEMA_VERSION,
     SYSTEM_PROMPT,
     THINKING_OFF,
     UNITS,
     append_record,
     augment_recipe,
-    baseline_cuisines,
+    baseline_cuisine,
     build_output_schema,
     build_request_params,
     build_user_message,
+    cuisine_path,
     estimate_cost,
     load_done_keys,
     parse_answer,
@@ -56,7 +58,7 @@ def make_result(**overrides):
             {"position": 2, "quantity": None, "unit": "to_taste"},
         ],
         "extra_ingredients": [],
-        "cuisines": ["american"],
+        "cuisine": "american",
     }
     return result | overrides
 
@@ -76,8 +78,13 @@ def test_schema_enums_match_vocabularies_and_serialize():
     schema = build_output_schema()
     item = schema["properties"]["ingredients"]["items"]["properties"]
     assert item["unit"]["enum"] == UNITS
-    assert schema["properties"]["cuisines"]["items"]["enum"] == CUISINES
+    assert schema["properties"]["cuisine"]["enum"] == CUISINES
     json.dumps(schema)  # the API needs plain JSON
+
+
+def test_package_is_not_a_unit_and_the_prompt_says_to_use_weight():
+    assert "package" not in UNITS
+    assert 'no "package" unit' in SYSTEM_PROMPT and "g, oz or lb" in SYSTEM_PROMPT
 
 
 def test_system_prompt_lists_every_unit():
@@ -131,12 +138,10 @@ def test_nonpositive_quantity_is_caught():
     assert validate_result(result, 3)
 
 
-def test_cuisine_count_and_duplicates():
-    assert validate_result(make_result(cuisines=[]), 3)
-    too_many = ["american", "italian", "mexican", "greek"]
-    assert len(too_many) > MAX_CUISINES
-    assert validate_result(make_result(cuisines=too_many), 3)
-    assert validate_result(make_result(cuisines=["italian", "italian"]), 3)
+def test_schema_asks_for_exactly_one_cuisine():
+    schema = build_output_schema()
+    assert "cuisine" in schema["required"] and "cuisines" not in schema["properties"]
+    assert schema["properties"]["cuisine"]["type"] == "string"
 
 
 LISTED = ["eggs", "mayonnaise", "salt"]  # the names behind make_recipe()
@@ -218,36 +223,48 @@ def test_keyword_table_only_uses_allowed_cuisines():
 
 
 def test_baseline_maps_keywords_and_category():
-    assert baseline_cuisines(["Weeknight", "Thai", "Easy"], "Asian") == ["thai"]
-    assert baseline_cuisines([], "Mexican") == ["mexican"]
+    assert baseline_cuisine(["Weeknight", "Thai", "Easy"], "Asian") == "thai"
+    assert baseline_cuisine([], "Mexican") == "mexican"
 
 
-def test_baseline_dedupes_and_merges_synonyms():
-    # cajun and creole share one cuisine; keyword and category can repeat it
-    assert baseline_cuisines(["Cajun", "Creole"], "Cajun") == ["cajun_creole"]
+def test_baseline_merges_synonyms():
+    # cajun and creole share one cuisine
+    assert baseline_cuisine(["Cajun", "Creole"], "Cajun") == "cajun_creole"
 
 
 def test_baseline_ignores_coarse_words_and_missing_values():
-    assert baseline_cuisines(["European", "Asian"], "European") == []
-    assert baseline_cuisines(["Easy"], None) == []
+    assert baseline_cuisine(["European", "Asian"], "European") is None
+    assert baseline_cuisine(["Easy"], None) is None
 
 
-def test_baseline_caps_at_max_cuisines():
+def test_baseline_returns_the_first_cuisine_named():
     keywords = ["Mexican", "Thai", "Greek", "Korean"]
-    assert baseline_cuisines(keywords, None) == ["mexican", "thai"]
+    assert baseline_cuisine(keywords, None) == "mexican"
+    assert baseline_cuisine(["Easy"], "Greek") == "greek"  # category is used when no keyword matches
 
 
 def test_baseline_maps_merged_and_renamed_tags():
     # tags we deliberately fold into a broader label, or spell differently
-    assert baseline_cuisines(["Scottish"], None) == ["british"]
-    assert baseline_cuisines(["Szechuan"], "Hunan") == ["chinese"]
-    assert baseline_cuisines(["Tex Mex"], None) == ["tex_mex"]
-    assert baseline_cuisines(["Ecuadorean"], None) == ["ecuadorian"]
+    assert baseline_cuisine(["Scottish"], None) == "british"
+    assert baseline_cuisine(["Szechuan"], "Hunan") == "chinese"
+    assert baseline_cuisine(["Tex Mex"], None) == "tex_mex"
+    assert baseline_cuisine(["Ecuadorean"], None) == "ecuadorian"
 
 
 def test_baseline_keeps_same_name_tags_with_underscores():
-    assert baseline_cuisines(["Puerto Rican"], None) == ["puerto_rican"]
-    assert baseline_cuisines([], "South African") == ["south_african"]
+    assert baseline_cuisine(["Puerto Rican"], None) == "puerto_rican"
+    assert baseline_cuisine([], "South African") == "south_african"
+
+
+def test_parent_table_only_uses_listed_cuisines_and_is_one_level_deep():
+    assert set(CUISINE_PARENT) <= set(CUISINES) and set(CUISINE_PARENT.values()) <= set(CUISINES)
+    assert not set(CUISINE_PARENT.values()) & set(CUISINE_PARENT)  # no grandparents or loops
+
+
+def test_cuisine_path_adds_the_parent_only_when_there_is_one():
+    assert cuisine_path("cantonese") == ["cantonese", "chinese"]
+    assert cuisine_path("tex_mex") == ["tex_mex", "mexican"]
+    assert cuisine_path("italian") == ["italian"]
 
 
 def test_cuisine_list_is_wide_and_has_the_cuisines_food_com_lacks():
@@ -341,7 +358,9 @@ def test_augment_recipe_sums_thinking_tokens_across_attempts():
         msg.usage.output_tokens_details = SimpleNamespace(thinking_tokens=thinking)
         return msg
 
-    bad = with_thinking(json.dumps(make_result(cuisines=[])), 30)
+    wrong_count = make_result()
+    wrong_count["ingredients"].pop()
+    bad = with_thinking(json.dumps(wrong_count), 30)
     good = with_thinking(json.dumps(make_result()), 20)
     record = augment_recipe(FakeClient([bad, good]), make_recipe())
     assert record["thinking_tokens"] == 50 and record["mode"] == "thinking"
@@ -366,7 +385,8 @@ def test_augment_recipe_retries_when_an_extra_repeats_a_listed_name():
 
 
 def test_augment_recipe_fails_after_two_bad_answers():
-    bad = make_result(cuisines=[])
+    bad = make_result()
+    bad["ingredients"].pop()
     client = FakeClient([bad, bad])
     record = augment_recipe(client, make_recipe())
     assert record["status"] == "failed" and record["attempts"] == 2
@@ -383,8 +403,8 @@ def test_augment_recipe_treats_cut_off_answer_as_a_problem():
 def test_resume_skips_ok_but_not_failed(tmp_path):
     path = tmp_path / "out.jsonl"
     assert load_done_keys(path) == set()
-    append_record(path, {"source_ref": 1, "status": "ok"})
-    append_record(path, {"source_ref": 2, "status": "failed"})
+    append_record(path, {"source_ref": 1, "status": "ok", "schema_version": SCHEMA_VERSION})
+    append_record(path, {"source_ref": 2, "status": "failed", "schema_version": SCHEMA_VERSION})
     assert load_done_keys(path) == {1}
 
 
@@ -502,3 +522,25 @@ def test_resume_uses_source_ref_not_the_position_number(tmp_path):
     client = FakeClient([make_result()])
     assert len(run_recipes(client, [shifted], path, 1)) == 1  # not skipped
     assert load_done_keys(path) == {111, 222}
+
+
+def test_records_carry_the_schema_version():
+    record = augment_recipe(FakeClient([make_result()]), make_recipe())
+    assert record["schema_version"] == SCHEMA_VERSION
+
+
+def test_resume_ignores_records_from_other_or_missing_versions(tmp_path):
+    """The 200 pilot records (no version) and a v-1 record must be redone, not kept."""
+    path = tmp_path / "out.jsonl"
+    append_record(path, {"source_ref": 1, "status": "ok"})  # old pilot: no version at all
+    append_record(path, {"source_ref": 2, "status": "ok", "schema_version": SCHEMA_VERSION - 1})
+    append_record(path, {"source_ref": 3, "status": "ok", "schema_version": SCHEMA_VERSION})
+    assert load_done_keys(path) == {3}
+
+
+def test_bumping_the_version_reopens_every_recipe(tmp_path, monkeypatch):
+    path = tmp_path / "out.jsonl"
+    run_recipes(FakeClient([make_result()]), [make_recipe()], path, 1)
+    assert load_done_keys(path) == {9001}
+    monkeypatch.setattr(augment_module, "SCHEMA_VERSION", SCHEMA_VERSION + 1)
+    assert load_done_keys(path) == set()
