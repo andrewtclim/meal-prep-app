@@ -54,6 +54,21 @@ extras as (
         with ordinality as e(item, idx)
 )
 
-select * from listed
-union all
-select * from extras
+, combined as (
+    select * from listed
+    union all
+    select * from extras
+)
+
+-- ingredient_name is the version of the name we match on: lowercase, trimmed,
+-- runs of spaces collapsed. `name` stays as written so we can see what changed.
+-- This is only normalization v1 (ROADMAP: "Ingredient name normalization v1").
+select
+    source_ref,
+    line_no,
+    name,
+    regexp_replace(lower(trim(name)), '\s+', ' ', 'g') as ingredient_name,
+    quantity,
+    unit,
+    is_extra
+from combined

@@ -19,6 +19,12 @@ models:
         description: Ingredient name as written, not yet cleaned.
         data_tests:
           - not_null
+      - name: ingredient_name
+        description: >
+          name lowercased, trimmed, repeated spaces collapsed. The key we match
+          on (normalization v1).
+        data_tests:
+          - not_null
       - name: unit
         description: Unit name from the LLM answer, to be matched to public.units.
         data_tests:
