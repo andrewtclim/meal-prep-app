@@ -457,3 +457,19 @@ Flow so far: `raw.foodcom_prepared` (written by `load.py`) -> `staging.stg_recip
 **Which columns staging keeps.** `stg_recipes` takes only what downstream models need: the six recipe columns that map to `public.recipes`, `ingredient_parts`, and the three lists from `answer`. Left out: `keywords` (nothing in `public` uses it), `quantities_raw` (the LLM's `quantity`/`unit` replace it), `model` and `loaded_at` (load bookkeeping). `answer` only has three keys and we take all three.
 
 **A gap caught.** The LLM answer holds only `position`, `quantity`, `unit` per ingredient, so the ingredient names have to come from `ingredient_parts`, matched by position. The first draft of `stg_recipes` left that column out. We added it (with a `not_null` test) rather than letting the next model read `raw` directly, so that only staging touches `raw`.
+
+### First intermediate model: `int_recipe_ingredients` (2026-11-01)
+
+**Data facts found first.** In `raw.foodcom_prepared`, `ingredient_parts`, `quantities_raw`, `instructions` and `keywords` are all jsonb lists. The LLM answer's ingredient entries hold only `position` (0-based), `quantity`, `unit`; the names live in `ingredient_parts`. Extras carry their own `name` and can have `quantity: null` with `unit: "to_taste"`. `instructions` is a list of step strings, but `public.recipes.instructions` is `Text`, so the steps must be joined into one string before the upsert (not done in staging, which only passes data through). `quantities_raw` has text fractions like `½`, which is why we use the LLM's numeric `quantity`.
+
+**The model** (`dbt/models/intermediate/int_recipe_ingredients.sql`) returns one row per ingredient line: listed ingredients (name from `ingredient_parts`, quantity and unit from the answer, joined on position) plus extras (`is_extra = true`).
+
+```sql
+cross join lateral jsonb_array_elements_text(r.ingredient_parts)
+    with ordinality as n(name, idx)
+-- ordinality counts from 1, the LLM from 0, so position = idx - 1
+```
+
+`jsonb_array_elements_text` turns a jsonb list into rows; `with ordinality` numbers them; `cross join lateral` lets each recipe row feed its own list into the function. The off-by-one (Postgres 1-based, LLM 0-based) is fixed once, here, by `idx - 1`. `line_no` is a unique 0-based order per recipe (extras continue after the listed ones), which later gives the link-table rows a stable key. Names are passed through uncleaned; normalization is a separate decision. Intermediate models are views too (`dbt_project.yml`).
+
+**Separate schemas per layer.** `profiles.yml` sets one schema (`staging`) for every model, so the intermediate view would have landed next to the staging one. Adding `+schema: intermediate` to the folder alone gives `staging_intermediate`, because dbt's built-in `generate_schema_name` macro glues the custom name onto the target schema (so dev and prod can share a database without colliding). We override that macro in `dbt/macros/generate_schema_name.sql`: a model with a custom schema goes in exactly that schema, one without goes in the target schema. Checked from the parsed manifest: `stg_recipes -> staging`, `int_recipe_ingredients -> intermediate`. Tradeoff: with the override, two people running dbt against the same database write to the same schemas; fine for us (one dev database), but a per-person target schema would be needed if that changes.
