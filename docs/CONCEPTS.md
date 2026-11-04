@@ -208,3 +208,33 @@
 - **Where we use it:** `stg_recipes` in `dbt/models/staging/`; intermediate models come next. No `marts/` layer, since our final tables are the app tables in `public`.
 - **Why this over the alternative:** If a model reads `raw` directly, a change in `raw` has to be fixed in every model. With a staging layer it is fixed once. The tradeoff is an extra hop for small projects.
 - **Common question:** What goes in staging and what goes in intermediate? Staging renames and retypes; anything that changes meaning goes in intermediate.
+
+### Unpacking a jsonb list into rows (lateral join, ordinality)
+- **What it is:** `jsonb_array_elements_text(list)` returns one row per item in a jsonb list. `cross join lateral` lets it read the list from the current row of the table to its left. `with ordinality` adds a counter that starts at 1, so it needs `- 1` to match a 0-based position.
+- **Where we use it:** `dbt/models/intermediate/int_recipe_ingredients.sql` (names, extras) and `int_recipe_cuisines.sql`.
+- **Why this over the alternative:** Doing the unpacking in Python would mean running a script outside the database and losing dbt's ordering and tests. The tradeoff is Postgres-specific syntax that is harder to read than a loop.
+- **Common question:** How do you turn a list inside a column into rows? Explode it with a lateral join; the counter keeps the order.
+
+### Singular test (dbt)
+- **What it is:** A SQL file in `dbt/tests/` that returns the rows that break a rule. Zero rows means the test passes. Built-in tests (`unique`, `not_null`) cover one column; a singular test covers a rule across tables or counts.
+- **Where we use it:** `dbt/tests/recipe_cuisine_count.sql` (each recipe has 1 to 2 cuisines, no duplicates). It starts from `stg_recipes` with a left join so recipes with no rows still show up; `not_null` cannot see rows that do not exist.
+- **Why this over the alternative:** A package like `dbt_utils` has ready-made tests but is a new dependency. A short SQL file needs nothing new. The tradeoff is that constants such as the `2` are copied from `augment.py` and must be kept in step by hand.
+- **Common question:** What does a missing row look like to a test? Nothing, which is why you start from the table that has every row.
+
+### dbt schema naming macro
+- **What it is:** dbt calls the macro `generate_schema_name` to pick each model's schema. By default it joins the target schema and the custom name (`staging_intermediate`). Our override in `dbt/macros/generate_schema_name.sql` uses the custom name as written.
+- **Where we use it:** `+schema: intermediate` in `dbt/dbt_project.yml`.
+- **Why this over the alternative:** The default keeps developers from overwriting each other in a shared database. We have one dev database, so plain names are clearer. If that changes, we need a per-person target schema.
+- **Common question:** Why did dbt create `staging_intermediate`? Its default prefixes the target schema.
+
+### Transaction and rollback (dry run)
+- **What it is:** A transaction groups statements so they succeed or fail as one: nothing is visible to others until `COMMIT`, and an error means `ROLLBACK` undoes all of it. In psycopg, `with conn.transaction():` commits when the block ends and rolls back if an exception leaves it. Raising `psycopg.Rollback()` inside the block rolls back on purpose and leaves quietly, which gives a dry run: do every step, read the counts, change nothing.
+- **Where we use it:** `publish` in `pipelines/foodcom/publish.py`, and `replace_table` in `pipelines/foodcom/load.py`.
+- **Why this over the alternative:** Without a transaction, a failure halfway leaves `public` half-updated, which we saw when testing a dbt macro that did not start with `begin`. The tradeoff is that a long transaction holds locks and cannot undo anything after it commits (identity counters also do not go back).
+- **Common question:** What happens if the fourth statement fails? The first three are undone, because none was committed.
+
+### Transform vs publish
+- **What it is:** Splitting the pipeline into a step that builds and tests data in scratch schemas (dbt: `staging`, `intermediate`) and a separate, careful step that writes it into the live tables (`publish.py` into `public`). A check sits between them (dbt tests, then the missing-name checks). Close cousin of write-audit-publish.
+- **Where we use it:** dbt models in `dbt/models/`, then `pipelines/foodcom/publish.py`.
+- **Why this over the alternative:** dbt is built to own and replace the tables it creates, but `public` is owned by Alembic and referenced by other tables, so it needs upserts in a transaction. The tradeoff is one more command to run after `dbt build`.
+- **Common question:** Why not let dbt write the final tables? It would reassign ids and drop tables other tables point at.

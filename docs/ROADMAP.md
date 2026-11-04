@@ -35,7 +35,7 @@
 | Food.com stage 1: `clean.py` (clean, dedupe, size funnel) | must | Andrew | done: 212,846-recipe subset (DECISIONS #25) |
 | Food.com stage 2: `augment.py` (LLM units, quantities, cuisines) | must | Andrew | in progress: code and a 3-recipe test done (DECISIONS #26); pilot of 200 and budget agreement next |
 | Create `raw` schema, load the prepared Food.com data into it (source file stays local, DECISIONS #24) | must | Paul | in progress (DECISIONS #27): migration applied and `load.py` loads the 20-recipe pilot; the full load waits on PR #18 and the budget agreement |
-| Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | Paul | in progress: dbt installed in a `transforms` group; project, models and tests next |
+| Set up dbt: raw to clean recipe and ingredient models, basic data tests in CI | must | Paul | in progress: dbt project, staging and intermediate models and 16 tests done (PR #21); `publish.py` writes them into `public`; dbt in CI (`dbt parse`) and cuisine seeds still to do |
 | `pipeline_runs` log table | should | | |
 | Ingredient name normalization v1 | must | | |
 | Draft DATA_MODEL.md cross-store details | should | | |
