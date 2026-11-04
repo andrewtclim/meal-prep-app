@@ -473,3 +473,19 @@ cross join lateral jsonb_array_elements_text(r.ingredient_parts)
 `jsonb_array_elements_text` turns a jsonb list into rows; `with ordinality` numbers them; `cross join lateral` lets each recipe row feed its own list into the function. The off-by-one (Postgres 1-based, LLM 0-based) is fixed once, here, by `idx - 1`. `line_no` is a unique 0-based order per recipe (extras continue after the listed ones), which later gives the link-table rows a stable key. Names are passed through uncleaned; normalization is a separate decision. Intermediate models are views too (`dbt_project.yml`).
 
 **Separate schemas per layer.** `profiles.yml` sets one schema (`staging`) for every model, so the intermediate view would have landed next to the staging one. Adding `+schema: intermediate` to the folder alone gives `staging_intermediate`, because dbt's built-in `generate_schema_name` macro glues the custom name onto the target schema (so dev and prod can share a database without colliding). We override that macro in `dbt/macros/generate_schema_name.sql`: a model with a custom schema goes in exactly that schema, one without goes in the target schema. Checked from the parsed manifest: `stg_recipes -> staging`, `int_recipe_ingredients -> intermediate`. Tradeoff: with the override, two people running dbt against the same database write to the same schemas; fine for us (one dev database), but a per-person target schema would be needed if that changes.
+
+**`dbt build` result.** `stg_recipes` and `int_recipe_ingredients`: `PASS=15` (2 models, 3 source tests, 5 tests on `stg_recipes`, 5 on `int_recipe_ingredients`). The `unit` `not_null` test passed on the 20 pilot recipes, so the LLM returned a unit every time, including for "to taste" extras; the test stays as a guard for the full run. `line_no` exists to tell identical rows apart (the same ingredient listed twice, e.g. "salt" for batter and for topping) and to keep the author's order; it is not for matching old rows to new ones, because link tables are replaced per recipe.
+
+### Second intermediate model: `int_recipe_cuisines`
+
+`dbt/models/intermediate/int_recipe_cuisines.sql` unpacks the cuisine list into one row per `(source_ref, cuisine)`:
+
+```sql
+cross join lateral jsonb_array_elements_text(r.cuisines_json) as c(cuisine)
+```
+
+Same pattern as the ingredients model, simpler: a list of plain strings, so no join and no position. Names are passed through as written; matching them to `public.cuisines` ids happens at load time (the cuisine list is still being finalized, and a name that has no match should fail loudly there). Tests: `not_null` on both columns.
+
+**An empty list slips past `not_null`.** Paul asked whether `cuisines_json = []` is a problem. `not_null` on `cuisines_json` passes (an empty list is not `NULL`), and `not_null` on `cuisine` passes (no rows, so nothing to be null); the recipe silently disappears from `int_recipe_cuisines`. Missing key, empty list and an item with no value are three different cases and need different checks. `augment.py` requires 1 to `MAX_CUISINES` (2) cuisines with no duplicates (`validate_result`), but `load.py` only checks the key exists and is a list, so `raw` trusts `augment.py`. We added a singular test, `dbt/tests/recipe_cuisine_count.sql`: a query that returns recipes with fewer than 1, more than 2, or duplicate cuisines (left join from `stg_recipes` so recipes with none still show up); zero rows means pass. The `2` is hard-coded and must follow `MAX_CUISINES`.
+
+New concept entries in `docs/CONCEPTS.md` this session: unpacking a jsonb list into rows (lateral join, ordinality), singular test, dbt schema naming macro.
