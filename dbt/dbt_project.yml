@@ -8,3 +8,6 @@ models:
   recipe_transforms:
     staging:
       +materialized: view
+    intermediate:
+      +materialized: view
+      +schema: intermediate

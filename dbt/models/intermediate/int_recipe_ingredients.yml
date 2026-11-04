@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: int_recipe_ingredients
+    description: >
+      One row per ingredient line per recipe. Listed ingredients (names from
+      ingredient_parts, quantity and unit from the LLM answer, joined on
+      position) plus extra ingredients the LLM found in the instructions.
+    columns:
+      - name: source_ref
+        description: Food.com's own recipe id.
+        data_tests:
+          - not_null
+      - name: line_no
+        description: 0-based order within the recipe. Unique per source_ref.
+        data_tests:
+          - not_null
+      - name: name
+        description: Ingredient name as written, not yet cleaned.
+        data_tests:
+          - not_null
+      - name: unit
+        description: Unit name from the LLM answer, to be matched to public.units.
+        data_tests:
+          - not_null
+      - name: is_extra
+        description: True if the LLM added it from the instructions.
+        data_tests:
+          - not_null
