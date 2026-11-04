@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: int_recipe_cuisines
+    description: >
+      One row per (recipe, cuisine) from the LLM answer. Becomes the rows of
+      public.recipe_cuisine once cuisine names are matched to cuisine ids.
+    columns:
+      - name: source_ref
+        description: Food.com's own recipe id.
+        data_tests:
+          - not_null
+      - name: cuisine
+        description: Cuisine name as the model wrote it (for example "american").
+        data_tests:
+          - not_null
