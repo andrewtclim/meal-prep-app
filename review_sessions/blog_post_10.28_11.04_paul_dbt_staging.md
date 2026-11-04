@@ -7,8 +7,9 @@ Started stage 3 of the Food.com pipeline: loading the cleaned and LLM-augmented 
 | PR | What it did | State |
 |---|---|---|
 | [#20](https://github.com/andrewtclim/meal-prep-app/pull/20) | Migration (`raw` schema, recipe source columns, `is_extra`, `recipe_cuisine`, units), `load.py` with tests, dbt dependency, DECISIONS #27 and docs | Open. Base is `feat/foodcom-augment` (PR #18), so the diff shows only this work; change the base to `main` after #17 and #18 merge |
-| [#21](https://github.com/andrewtclim/meal-prep-app/pull/21) | dbt project, connection profile, `sources.yml`, `stg_recipes` and 8 tests, `DBT_*` in `.env.example`, dbt concepts | Open (draft). Base is `feat/dbt-staging` (#20), so the diff shows only dbt files; it depends on #20 for the `raw` table and must merge after #18 and #20 |
-| (next) | Intermediate models (ingredients, cuisines), then the upsert into `public` | Not started |
+| [#21](https://github.com/andrewtclim/meal-prep-app/pull/21) | dbt project, connection profile, `sources.yml`, `stg_recipes`, intermediate models (`int_recipe_ingredients`, `int_recipe_cuisines`, `int_ingredients`), 4 models and 19 tests (a singular cuisine-count test among them), schema-name macro, `DBT_*` in `.env.example`, dbt concepts | Open (draft). Base is `feat/dbt-staging` (#20), so the diff shows only dbt files; it depends on #20 for the `raw` table and must merge after #18 and #20 |
+| [#22](https://github.com/andrewtclim/meal-prep-app/pull/22) | `publish.py` and its SQL files: checks, then one transaction that upserts `ingredients` and `recipes` and rewrites `recipe_ingredient` and `recipe_cuisine`; `--dry-run`; 8 tests; DECISIONS #27 amendment, 2 concepts | Open (draft). Base is `feat/dbt-project` (#21); merges after #18, #20 and #21. Real publish blocked until `cuisines` is seeded |
+| (next) | `dbt parse` in CI; cuisine seeds; version 3 cuisine shape (`load.py`, staging, cuisine model and test); dbt-macro version of publish for comparison (own PR); ingredient name normalization | Not started |
 
 ## Session: 2026-10-29
 ### What we worked on and why
