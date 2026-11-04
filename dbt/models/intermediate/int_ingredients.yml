@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: int_ingredients
+    description: >
+      One row per distinct cleaned ingredient name. The load into
+      public.ingredients upserts these on ingredient_name.
+    columns:
+      - name: ingredient_name
+        description: Lowercased, trimmed name, as in int_recipe_ingredients.
+        data_tests:
+          - unique
+          - not_null

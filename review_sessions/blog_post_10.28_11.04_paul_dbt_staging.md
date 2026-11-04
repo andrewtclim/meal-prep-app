@@ -491,3 +491,97 @@ Same pattern as the ingredients model, simpler: a list of plain strings, so no j
 New concept entries in `docs/CONCEPTS.md` this session: unpacking a jsonb list into rows (lateral join, ordinality), singular test, dbt schema naming macro.
 
 **Build with all three models.** `dbt build`: `PASS=19` (3 models, 3 source tests, 5 on `stg_recipes`, 5 on `int_recipe_ingredients`, 2 on `int_recipe_cuisines`, 1 singular test `recipe_cuisine_count`), `ERROR=0`. Pipeline so far: `raw.foodcom_prepared` -> `staging.stg_recipes` -> `intermediate.int_recipe_ingredients` and `int_recipe_cuisines`. Still to do: the upsert into `public` (where it lives, creating `ingredients` from names, matching unit and cuisine names to ids).
+
+### Andrew's PR #18 changes land under our feet (2026-11-03)
+
+After the review, Andrew pushed three commits to `feat/foodcom-augment` (DECISIONS #26 amendment): `cuisines` (list, cap 2) became `cuisine` (one string; the parent is added in code from `CUISINE_PARENT`), `package` was removed from `UNITS`, and every record now carries `schema_version` (3 for the new rules; the 20 pilot rows we loaded are version 2). Effect on our stack: `load.py` requires a `cuisines` list, `stg_recipes` reads `answer -> 'cuisines'`, `int_recipe_cuisines` unpacks a list, and `recipe_cuisine_count` checks 1 to 2, so all four assume the old shape; the `units` seed in our applied migration still has `package`. `feat/dbt-staging` is 3 commits behind and needs a rebase. Open decision: support version 3 only (one shape to maintain, needs a small version-3 pilot for test data) or accept both shapes. This is the cost of building on an open PR: upstream changes to the data shape reach every stacked branch, which is why the schema version stamp exists.
+
+### Decision: finish the current shape first, fix the cuisine change after (2026-11-04)
+
+Paul chose to complete the dbt work on the version 2 shape (`cuisines` list) that this branch and the 20 pilot rows use, and handle Andrew's one-cuisine change (version 3) afterwards as one separate change. Checked first: there is no version 3 data anywhere in the repo (the committed pilot files are all version 2, there is no local `augment_results.jsonl`), so version 3 test data would need a small paid augment run or a file from Andrew. Tradeoff: some rework later (`load.py`, `stg_recipes`, `int_recipe_cuisines`, the cuisine count test, the stale `package` unit seed), in exchange for not blocking on a rebase and a paid run.
+
+### Ingredient names: `ingredient_name` and `int_ingredients`
+
+DECISIONS #27 says dbt does only simple name cleaning at first and real normalization is its own roadmap task. `int_recipe_ingredients` now keeps the raw `name` and adds `ingredient_name`:
+
+```sql
+regexp_replace(lower(trim(name)), '\s+', ' ', 'g') as ingredient_name
+```
+
+`lower` and `trim` fix case and edge spaces; the regex collapses runs of whitespace ("olive   oil" to "olive oil"). The raw name stays beside it so a bad merge can be traced. The new model `int_ingredients` is `select distinct ingredient_name` from it, one row per ingredient, which is what gets upserted into `public.ingredients` (unique on `ingredient_name`). The recipe link rows and the `ingredients` rows both use `ingredient_name`, so the join between them cannot disagree. What v1 does not do: plurals ("tomato" vs "tomatoes"), descriptors ("fresh basil" vs "basil"), spelling variants.
+
+**Build with four models.** `dbt build`: `PASS=23`, `ERROR=0` (4 models; tests: 3 source, 5 `stg_recipes`, 6 `int_recipe_ingredients`, 2 `int_recipe_cuisines`, 1 singular `recipe_cuisine_count`, 2 `int_ingredients`). Pipeline: `raw.foodcom_prepared` -> `staging.stg_recipes` -> `intermediate.int_recipe_ingredients`, `int_recipe_cuisines`, `int_ingredients`. Regex note: in `regexp_replace(text, '\s+', ' ', 'g')`, `\s+` matches a run of whitespace, `' '` is the replacement, and `'g'` replaces every run instead of only the first (`a___b___c` becomes `a_b_c` with it and `a_b___c` without; `_` marks a space).
+
+**What the v1 cleaning did on the pilot.** The 20 recipes have 192 ingredient lines (listed plus extras), 127 distinct names before cleaning and 127 after, so `lower`/`trim`/space-collapse merged nothing; `clean.py` already strips each list item and the source names are already lowercase. The real duplicates are the plural kind: Paul found `carrot` and `carrots` in `int_ingredients`. That is the first concrete test case for the roadmap task "Ingredient name normalization v1" (plurals, then descriptors like "fresh basil" vs "basil"). Why it matters: the pantry check and the substitution graph match on `ingredient_id`, so two rows for one food split the data and make "I have carrots" not satisfy "carrot".
+
+**Decision: normalization stays its own task.** Paul chose not to fix plurals inside the dbt cleaning. Reasons: the roadmap lists normalization as a separate task, DECISIONS #27 says dbt only does `lower(trim(...))` for now, and because every model reads `ingredient_name` from one place, a better normalization later is a change in one model plus a rerun of dbt (the point of ELT). Candidate approaches recorded for that task: simple singularizing (risk: `molasses`, `hummus`, `couscous`, `asparagus`), a lemmatizer library (new dependency, ask first), or one LLM pass mapping the distinct names to canonical names.
+
+### Tested: can a dbt macro roll back a transaction? (2026-11-04)
+
+Paul asked to test the claim "a `run-operation` macro could use explicit `begin`/`commit`, but needs testing". Method: a throwaway dbt project in `/tmp` (nothing added to the repo) with macros run by `dbt run-operation`, writing to a scratch schema `txn_test` in Supabase (dropped afterwards; checked that it was gone). Each case creates a table and inserts one row, then:
+
+| Case | What the macro does | Table afterwards |
+|---|---|---|
+| A | no `begin`, then raises an error | **exists, 1 row** (writes were NOT undone) |
+| B | no `begin`, no error | exists, 1 row |
+| C | explicit `begin`, then raises an error | gone (rolled back) |
+| D | explicit `begin` ... `commit`, no error | exists, 1 row |
+| E | explicit `begin`, a real SQL error in the middle | gone (rolled back) |
+
+Result: by default a macro does not roll back. Earlier statements are already saved when a later one fails (case A), so a half-finished publish could be left behind. With an explicit `begin`, an error does undo everything (C, E) and `commit` saves it (D), so the pattern works, but only if every macro remembers to start with `begin`. Forgetting it fails silently in the dangerous direction. Contrast: psycopg's `with conn.transaction():` (used in `load.py`) is all-or-nothing by default, so there is no way to forget. Caveat: one run on one dbt version (1.12.6, dbt-postgres 1.11.0), five small cases; it shows the behavior, not a guarantee for every statement type.
+
+### Where the upsert into `public` lives: comparison and recommendation (2026-11-04)
+
+Both options run the same `INSERT ... ON CONFLICT` SQL, so the difference is the wrapper: option 1 is a Python script (psycopg) that runs SQL files in one transaction; option 2 is a dbt `run-operation` macro. Paul's questions and what we found:
+
+| | Option 1: SQL + Python script | Option 2: dbt macro |
+|---|---|---|
+| Rollback | default: `with conn.transaction()` is all-or-nothing (used in `load.py`) | only with an explicit `begin`; forgetting it leaves a half-written `public` (tested) |
+| Table names | hardcoded schema names | `ref()` keeps them in sync |
+| Testing | pure-Python parts testable in the pytest CI already runs | Jinja logic only testable by running dbt |
+| New things to learn | none (same as `load.py`) | `run-operation`, macros that run statements |
+| Runs in `dbt build` | no | no (`run-operation` is outside the model graph) |
+
+Corrections along the way: I first said option 2 "is not safe". Paul pointed out that a correct macro, once written, behaves the same as the script. That is right; the accurate claim is that option 2 is safe if written correctly and needs more care to stay that way (code gets edited later, e.g. the version 3 cuisine change; the safety rests on dbt behaviour we confirmed on one version, not a documented guarantee; and `dbt test` does not cover a `run-operation`).
+
+CI facts checked (`.github/workflows/ci.yml`): one job, runs `ruff` and `pytest` with `--group pipelines`; no Postgres service, no `transforms` group (so dbt files are not checked at all), no secrets. Automatic tests of the real SQL (upsert, rollback) would need a Postgres service in CI, a new service to agree on. Cheap options: pure-function pytest tests (free), and a separate PR adding `dbt parse` to CI (needs `--group transforms`, ask first).
+
+Recommendation: option 1, because rollback is the default, more of it is testable, it matches `load.py`, and the macro's one advantage (`ref()`) is small with three views. Would change if the publish had to run on every dbt run or schema names changed often. Paul may still build option 2 as a labelled experiment in its own PR (SQL written once in `.sql` files so the two cannot drift).
+
+### Shipped: `publish.py`, the step that writes dbt's results into `public` (2026-11-04)
+
+Decision: option 1 (script), with option 2 (macro) to follow later as its own PR; recorded as an amendment to DECISIONS #27. Files: `pipelines/foodcom/publish.py`, SQL in `pipelines/foodcom/publish_sql/`, tests in `tests/pipelines/test_publish.py`.
+
+```mermaid
+flowchart LR
+    A["dbt build: staging + intermediate views, 23 checks"] --> B["publish.py, one transaction"]
+    B --> C["0. checks: every unit and cuisine name exists"]
+    C --> D["10 upsert ingredients"] --> E["20 upsert recipes on source_ref"]
+    E --> F["30/31 rewrite recipe_ingredient"] --> G["40/41 rewrite recipe_cuisine"]
+```
+
+```python
+with conn.transaction():
+    problems = format_problems(find_missing_names(conn))
+    if problems:
+        raise MissingNamesError(problems)       # before any write
+    for filename in STEPS:
+        counts.append((filename, conn.execute(read_sql(filename)).rowcount))
+    if dry_run:
+        raise psycopg.Rollback()                # undo everything, quietly
+```
+
+What it does: the block is the transaction, so any error rolls back every step. The checks come first and write nothing; a unit or cuisine with no match stops the run with the names listed (otherwise the join would silently drop rows). `--dry-run` runs all steps and rolls back so you can read the row counts.
+
+```sql
+insert into public.recipes (recipe_name, source_ref, instructions, total_minutes, servings)
+select r.name, r.source_ref, (select string_agg(s.step, E'\n' order by s.idx) ...), ...
+from staging.stg_recipes as r
+on conflict (source_ref) do update set recipe_name = excluded.recipe_name, ...
+```
+
+`on conflict (source_ref) do update` finds an existing Food.com recipe and updates it in place, so `recipe_id` never changes; rows with no `source_ref` (user-saved) cannot conflict. The instruction steps (a jsonb list) are joined into the text column here. Link tables are cleared and rewritten per recipe, limited to `source_ref in (select source_ref from staging.stg_recipes)`, so user-saved recipes are never touched and ingredients the LLM stopped returning disappear.
+
+**Verified on the real database, in a transaction rolled back at the end.** Real `--dry-run` stopped at the check: `cuisines` is empty, and the pilot uses 9 cuisine names (american, chinese, italian, japanese, middle_eastern, native_american, other, tex_mex, thai). To exercise the writes anyway, a throwaway script added those 9 names inside an outer transaction, ran `publish` twice, inspected, then rolled everything back. Run 1: 127 ingredients, 20 recipes, 192 ingredient lines, 21 cuisine links. Run 2: the same totals and the same `recipe_id`s (idempotent). Afterwards every `public` table was back to 0 rows. Recipe 71222 came out in order with its extras last and `to_taste` lines with null quantity. Tests: 8 new pytest tests without a database (every SQL file listed and non-empty, parents before children, each delete right before its insert, deletes limited to staging recipes, message formatting); not tested automatically: the SQL itself (needs Postgres in CI).
+
+New concepts: transaction and rollback (dry run), transform vs publish (`CONCEPTS.md`). Still open: cuisine seeds (Alembic revision after Andrew's list is final), version 3 shape, `dbt parse` in CI, the macro comparison PR.
