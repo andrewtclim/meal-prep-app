@@ -30,9 +30,17 @@ PILOT_RESULTS_PATH = Path("pipelines/foodcom/pilot/results_thinking.jsonl")
 
 TABLE = "raw.foodcom_prepared"
 
+# Answer shapes this loader understands, as augment.py's SCHEMA_VERSION values. A
+# record stamped with any other version (or none) is skipped, so an old-shape answer
+# can never load as if it were current. Change this only together with the checks
+# below and the dbt model that reads the answer (DECISIONS #26, #27).
+KNOWN_SCHEMA_VERSIONS = (3,)
+
 # Keys the model's answer must have. A missing one means the output shape changed
-# (it has changed twice), so we stop and say so instead of loading half-empty rows.
-REQUIRED_ANSWER_KEYS = ("ingredients", "extra_ingredients", "cuisines")
+# (it has changed between schema versions), so we stop and say so instead of loading
+# half-empty rows. `ingredients` and `extra_ingredients` are lists, `cuisine` a string.
+REQUIRED_LIST_KEYS = ("ingredients", "extra_ingredients")
+REQUIRED_STRING_KEYS = ("cuisine",)
 
 # Column name -> Postgres type. `answer` is the model's answer kept whole as
 # jsonb so dbt unpacks it and a change in its shape does not break the load.
@@ -48,6 +56,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     servings          integer,
     total_minutes     integer,
     answer            jsonb NOT NULL,
+    schema_version    integer NOT NULL,
     model             text,
     loaded_at         timestamptz NOT NULL DEFAULT now()
 )
@@ -55,7 +64,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
 
 COLUMNS = (
     "source_ref", "recipe_name", "recipe_category", "keywords", "ingredient_parts",
-    "quantities_raw", "instructions", "servings", "total_minutes", "answer", "model",
+    "quantities_raw", "instructions", "servings", "total_minutes", "answer",
+    "schema_version", "model",
 )  # fmt: skip
 
 
@@ -83,10 +93,17 @@ def validate_answer(answer: dict | None) -> list[str]:
     """
     if not isinstance(answer, dict):
         return ["answer is missing"]
-    problems = [f"missing key '{key}'" for key in REQUIRED_ANSWER_KEYS if key not in answer]
-    for key in REQUIRED_ANSWER_KEYS:
+    problems = [
+        f"missing key '{key}'"
+        for key in REQUIRED_LIST_KEYS + REQUIRED_STRING_KEYS
+        if key not in answer
+    ]
+    for key in REQUIRED_LIST_KEYS:
         if key in answer and not isinstance(answer[key], list):
             problems.append(f"'{key}' is not a list")
+    for key in REQUIRED_STRING_KEYS:
+        if key in answer and not isinstance(answer[key], str):
+            problems.append(f"'{key}' is not a string")
     return problems
 
 
@@ -94,8 +111,8 @@ def read_results(path: Path) -> tuple[dict[int, dict], Counter]:
     """Read the LLM results file and return the usable records keyed by source_ref.
 
     Output: (records, skipped) where `skipped` counts records left out and why. A
-    record is skipped when its status is not "ok", it has no source_ref, or its
-    answer fails `validate_answer`. If a source_ref appears twice (a rerun), the
+    record is skipped when its status is not "ok", its `schema_version` is not in
+    `KNOWN_SCHEMA_VERSIONS`, it has no source_ref, or its answer fails `validate_answer`. If a source_ref appears twice (a rerun), the
     last good record wins. The file is append-only, so later lines are newer.
     """
     records: dict[int, dict] = {}
@@ -107,6 +124,8 @@ def read_results(path: Path) -> tuple[dict[int, dict], Counter]:
             record = json.loads(line)
             if record.get("status") != "ok":
                 skipped["status not ok"] += 1
+            elif record.get("schema_version") not in KNOWN_SCHEMA_VERSIONS:
+                skipped["unknown schema_version"] += 1
             elif record.get("source_ref") is None:
                 skipped["no source_ref"] += 1
             elif validate_answer(record.get("result")):
@@ -142,6 +161,7 @@ def build_rows(recipes: pd.DataFrame, results: dict[int, dict]) -> tuple[list[tu
             to_int(recipe.recipe_servings),
             to_int(recipe.total_minutes),
             json.dumps(record["result"]),
+            int(record["schema_version"]),
             record.get("model"),
         ))
     return rows, stats

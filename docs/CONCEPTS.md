@@ -119,7 +119,7 @@
 
 
 ### Structured outputs and closed vocabularies
-- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 19 units. The guarantee is on the shape of the answer, not on whether the values are correct.
+- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 18 units. The guarantee is on the shape of the answer, not on whether the values are correct.
 - **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
 - **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
 - **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
@@ -180,9 +180,9 @@
 - **Common question:** Why not insert your own ids? The counter does not know about them.
 
 ### jsonb
-- **What it is:** A Postgres column type that stores a JSON document in a binary form you can query and index. `answer->'cuisines'` reads one field out of it in SQL.
+- **What it is:** A Postgres column type that stores a JSON document in a binary form you can query and index. `answer->>'cuisine'` reads one field out of it in SQL.
 - **Where we use it:** the list columns and the model's whole answer in `raw.foodcom_prepared` (`pipelines/foodcom/load.py`).
-- **Why this over the alternative:** Flattened columns would break the load each time the model's output shape changes (it has changed twice). `jsonb` keeps the data whole and leaves the unpacking to dbt. The tradeoff is that a wrong field name only shows up when dbt runs, and the database does not check the inside of the document.
+- **Why this over the alternative:** Flattened columns would break the load each time the model's output shape changes (it has changed between schema versions 1, 2 and 3). `jsonb` keeps the data whole and leaves the unpacking to dbt. The tradeoff is that a wrong field name only shows up when dbt runs, and the database does not check the inside of the document.
 - **Common question:** When do you use jsonb and when real columns? Real columns for data you filter, join and constrain every day; `jsonb` for landing data whose shape may change.
 
 ### Full replace vs upsert

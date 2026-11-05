@@ -12,15 +12,22 @@ from pipelines.foodcom.load import (
     validate_answer,
 )
 
-GOOD_ANSWER = {"ingredients": [], "extra_ingredients": [], "cuisines": ["american"]}
+GOOD_ANSWER = {"ingredients": [], "extra_ingredients": [], "cuisine": "american"}
 
 
 def write_results(path, records):
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
 
 
-def record(source_ref, status="ok", answer=GOOD_ANSWER, **extra):
-    return {"source_ref": source_ref, "status": status, "result": answer, "model": "m", **extra}
+def record(source_ref, status="ok", answer=GOOD_ANSWER, schema_version=3, **extra):
+    return {
+        "source_ref": source_ref,
+        "status": status,
+        "result": answer,
+        "schema_version": schema_version,
+        "model": "m",
+        **extra,
+    }
 
 
 def make_recipes(refs):
@@ -48,8 +55,14 @@ def test_to_list_and_to_int_handle_missing_values():
 def test_validate_answer_flags_missing_keys_and_wrong_types():
     assert validate_answer(GOOD_ANSWER) == []
     assert validate_answer(None) == ["answer is missing"]
-    assert "missing key 'extra_ingredients'" in validate_answer({"ingredients": [], "cuisines": []})
-    assert validate_answer({**GOOD_ANSWER, "cuisines": "american"}) == ["'cuisines' is not a list"]
+    assert "missing key 'extra_ingredients'" in validate_answer({"ingredients": [], "cuisine": "x"})
+    assert validate_answer({**GOOD_ANSWER, "cuisine": ["american"]}) == ["'cuisine' is not a string"]
+    assert validate_answer({**GOOD_ANSWER, "ingredients": "x"}) == ["'ingredients' is not a list"]
+
+
+def test_validate_answer_rejects_the_old_cuisines_shape():
+    old = {"ingredients": [], "extra_ingredients": [], "cuisines": ["american"]}
+    assert validate_answer(old) == ["missing key 'cuisine'"]
 
 
 def test_read_results_skips_bad_records_and_counts_why(tmp_path):
@@ -58,11 +71,20 @@ def test_read_results_skips_bad_records_and_counts_why(tmp_path):
         record(1),
         record(2, status="failed"),
         record(3, answer={"ingredients": []}),
-        {"status": "ok", "result": GOOD_ANSWER},  # old record with no source_ref
+        {"status": "ok", "result": GOOD_ANSWER, "schema_version": 3},  # no source_ref
     ])
     records, skipped = read_results(path)
     assert list(records) == [1]
     assert skipped == {"status not ok": 1, "bad answer shape": 1, "no source_ref": 1}
+
+
+def test_read_results_skips_unknown_or_missing_schema_version(tmp_path):
+    path = tmp_path / "r.jsonl"
+    stale = {"source_ref": 3, "status": "ok", "result": GOOD_ANSWER}  # never stamped
+    write_results(path, [record(1), record(2, schema_version=2), stale])
+    records, skipped = read_results(path)
+    assert list(records) == [1]
+    assert skipped == {"unknown schema_version": 2}
 
 
 def test_read_results_last_good_record_wins(tmp_path):
@@ -86,6 +108,7 @@ def test_build_rows_matches_columns_and_writes_json_text():
     assert len(rows[0]) == len(COLUMNS)
     assert json.loads(row["ingredient_parts"]) == ["onion", "salt"]
     assert json.loads(row["answer"]) == GOOD_ANSWER
+    assert row["schema_version"] == 3
     assert row["servings"] == 4 and row["total_minutes"] == 30 and row["model"] == "m"
 
 

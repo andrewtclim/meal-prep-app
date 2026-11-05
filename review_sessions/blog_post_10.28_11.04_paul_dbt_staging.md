@@ -356,6 +356,26 @@ Sample rows: 47403 "Black Pepper Pork with Ramen Noodles" has 5 listed ingredien
 - Decided: `is_extra` is `NOT NULL DEFAULT false` (see above).
 - DATA_MODEL.md still says the flag is "proposed, not created yet"; update it in the PR that applies this migration.
 - CONCEPTS (to write in this PR): rebase vs merge, join on a stable key (`source_ref` vs a position number).
+### Session: closing out PR #20 after Andrew's review (2026-11-04)
+Andrew's review of #20 found schema drift: after my review of #18 he changed the model's answer from `cuisines` (a list) to `cuisine` (one string) and stamped every record with a `schema_version` (now 3). `load.py` still expected the old shape, so a version-3 file would have loaded 0 rows. I approved #18, so its shape is final.
+
+- **Rebased** `feat/dbt-staging` onto #18 (`bf71996`). The one conflict was in `docs/DECISIONS.md`: kept the "Decided: use thinking" text from #18 and dropped our old "Open" line it replaces.
+- **Loader now needs `cuisine` (a string)** and keeps `schema_version` in the table.
+- **Loader rejects unknown versions.** This is the usual way to stop mixed data shapes in one table: stamp each record with the version that produced it, and have the reader fail on a version it does not know.
+
+```python
+# pipelines/foodcom/load.py
+KNOWN_SCHEMA_VERSIONS = (3,)
+...
+elif record.get("schema_version") not in KNOWN_SCHEMA_VERSIONS:
+    skipped["unknown schema_version"] += 1
+```
+
+The list is explicit, not imported from `augment.py`, so bumping the version in `augment.py` makes the loader skip everything (and print why) until someone updates the loader and dbt model on purpose.
+- **Wording fixed** in the migration docstring and in DECISIONS #27 and CONCEPTS ("1 or 2 cuisines", "changed twice", unit counts).
+- **Not done:** dropping `package` from the seeded `units` needs a new migration revision (the old one is applied to Supabase); it waits for the unit list meeting. The committed pilot file is version 2, so `load.py --pilot` now skips all 20 rows until we have version-3 pilot results.
+- **Table change:** `raw.foodcom_prepared` gained a `schema_version` column, so the existing table on Supabase must be dropped by hand once before the next load (see `replace_table`).
+
 ## What we'd explain differently next time
 - The word "raw" is misleading here. It suggests untouched source data, but our `raw` holds prepared data (cleaned recipes plus LLM answers). Read DECISIONS #24 before assuming otherwise.
 - Why the migration copies the lists instead of importing them, and why hardcoded ids break an identity column. Both were first-draft mistakes worth remembering.
