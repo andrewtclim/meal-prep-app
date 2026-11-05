@@ -1,0 +1,921 @@
+[
+  {
+    "recipe_key": 67102,
+    "source_ref": 86635,
+    "name": "Lemon Cucumbers",
+    "recipe_category": "Summer",
+    "keywords": [
+      "< 15 Mins",
+      "Beginner Cook",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "cucumbers",
+      "yellow onion",
+      "vinegar",
+      "sugar",
+      "bottled lemon juice",
+      "celery seed",
+      "salt",
+      "black pepper"
+    ],
+    "quantities_raw": [
+      "2",
+      "1⁄2",
+      "1⁄4",
+      "2",
+      "1",
+      "1",
+      "3⁄4",
+      "1⁄8"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 4,
+    "recipe_yield": null,
+    "instructions": [
+      "Place cucumbers and onion in a bowl.",
+      "Combine rest of the ingredients in a measuring cup.",
+      "Stir well.",
+      "Pour over cucumbers and onions.",
+      "Chill for 4 hours."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 130775,
+    "source_ref": 164217,
+    "name": "Sour Pickle and Sweet Peppers Coleslaw",
+    "recipe_category": "Peppers",
+    "keywords": [
+      "Vegetable",
+      "< 15 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "red cabbage",
+      "red bell peppers",
+      "onion",
+      "dill pickle",
+      "fat-free mayonnaise",
+      "apple cider vinegar",
+      "celery seed"
+    ],
+    "quantities_raw": [
+      "1⁄2",
+      "2",
+      "1⁄2",
+      "1",
+      "1",
+      "1",
+      "1⁄2"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 8,
+    "recipe_yield": null,
+    "instructions": [
+      "In large bowl, combine all ingredients very well. Season to taste with salt and pepper. Keep refrigerated."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 95681,
+    "source_ref": 120757,
+    "name": "Mashed Potatoes With Sour Cream",
+    "recipe_category": "Potato",
+    "keywords": [
+      "Vegetable",
+      "Low Protein",
+      "< 60 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "russet potato",
+      "unsalted butter",
+      "unsalted butter",
+      "sour cream",
+      "parsley"
+    ],
+    "quantities_raw": [
+      "1",
+      "2",
+      "2",
+      "1⁄3",
+      "2"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": null,
+    "recipe_yield": null,
+    "instructions": [
+      "Place potatoes in a heavy saucepan.",
+      "Cover with salted water.",
+      "Bring to a boil over medium high heat. Reduce heat to medium low.",
+      "Cover saucepan and simmer 15 minutes or until potatoes are tender. Drain, reserving 1/3 cup liquid.",
+      "Add butter, sour cream, and salt and pepper to taste.",
+      "Mash until smooth with an electric mixer or hand masher, adding reserved cooking liquid as necessary to moisten potatoes.",
+      "Stir in parsley. Serve potatoes with mushroom gravy."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 54874,
+    "source_ref": 71222,
+    "name": "Mama's Lasagna",
+    "recipe_category": "Meat",
+    "keywords": [
+      "Very Low Carbs",
+      "Potluck",
+      "Spring",
+      "Winter",
+      "Hanukkah",
+      "Weeknight",
+      "< 4 Hours"
+    ],
+    "ingredient_parts": [
+      "ground beef",
+      "tomato sauce",
+      "tomato paste",
+      "cottage cheese",
+      "ricotta cheese",
+      "egg",
+      "fresh parsley",
+      "mozzarella cheese"
+    ],
+    "quantities_raw": [
+      "1",
+      "1",
+      "2",
+      "1",
+      "1",
+      "1⁄2",
+      "",
+      "1"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 12,
+    "recipe_yield": null,
+    "instructions": [
+      "Brown ground beef in a frying pan.",
+      "Add sauce and tomato paste.",
+      "In a bowl mix cottage cheese with egg, Parmesan cheese, and parsley.",
+      "Cover the bottom of a 9x13 inch pan with a little of the sauce.",
+      "Layer the uncooked noodles, then cottage cheese mixture, then meat sauce, then slices of mozzarella. Do one more layer in the same order.",
+      "Sprinkle top with Parmesan cheese.",
+      "Cover with foil and bake at 350°F for 45 minutes to an hour to make sure noodles are done."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 290715,
+    "source_ref": 365994,
+    "name": "Mom's Classic Tuna Melt",
+    "recipe_category": "Lunch/Snacks",
+    "keywords": [
+      "High Protein",
+      "High In...",
+      "Brunch",
+      "< 30 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "tuna in water",
+      "mayonnaise",
+      "swiss cheese",
+      "bagel"
+    ],
+    "quantities_raw": [
+      "1",
+      "3",
+      "2",
+      "1"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 2,
+    "recipe_yield": "2 half bagels",
+    "instructions": [
+      "Preheat your oven on low broil.",
+      "Drain the water out of the tuna and combine the tuna and mayo in a bowl.",
+      "Cut the bagel in half to form two donuts and toast in a toaster.",
+      "Spread tuna on each half of the bagel and top with a slice of Swiss cheese.",
+      "Place in the oven until the cheese is melted."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 297931,
+    "source_ref": 374947,
+    "name": "Fava Beans Just Like Grandma Made",
+    "recipe_category": "Vegetable",
+    "keywords": [
+      "< 60 Mins"
+    ],
+    "ingredient_parts": [
+      "fava beans",
+      "onion",
+      "butter",
+      "olive oil",
+      "garlic clove",
+      "tomato sauce",
+      "pepper",
+      "parmesan cheese"
+    ],
+    "quantities_raw": [
+      "2",
+      "1",
+      "1",
+      "1",
+      "1",
+      "8",
+      "1⁄8",
+      "1"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 2,
+    "recipe_yield": null,
+    "instructions": [
+      "Shell the beans, add to boiling water, cook for apprx 10 minutes, dash into cold water drain.",
+      "Heat the oil and butter in a skillet.  Add onion and garlic and saute over medium heat until the onions are golden brown apprx 20 minutes.",
+      "Add Fava beans, tomato sauce, and pepper to the onions.",
+      "Place beans and onions in an oven proof dish and sprinkle with cheese.",
+      "To  make this dish ahead stop here and refrigerate.",
+      "Bake in 350 F oven for 20 minutes if beans are hot off the stove and 30 minutes if they have been in the frig.",
+      "Cheese will be melted, if you would like it browned will need to place under the broiled for a minute or two."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 187226,
+    "source_ref": 234181,
+    "name": "Spicy Carrot Coins",
+    "recipe_category": "Vegetable",
+    "keywords": [
+      "Low Protein",
+      "Low Cholesterol",
+      "Healthy",
+      "< 30 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "carrots",
+      "water",
+      "cinnamon stick",
+      "ground ginger",
+      "ground cumin",
+      "ground coriander",
+      "salt",
+      "cayenne pepper",
+      "honey",
+      "lemon juice"
+    ],
+    "quantities_raw": [
+      "2",
+      "1 1⁄4",
+      "1",
+      "1",
+      "1",
+      "1⁄2",
+      "1⁄4",
+      "1⁄8",
+      "1⁄4",
+      "4"
+    ],
+    "quantities_aligned": true,
+    "recipe_servings": 6,
+    "recipe_yield": null,
+    "instructions": [
+      "In nonstick saucepan combine the first 8 ingredients. Bring to a boil. Reduce heat; cover and simmer for 5 minutes.",
+      "Discard cinnamon stick.",
+      "Add honey and lemon juice to carrots. Bring to a boil; cook, uncovered, for 5 to 8 minutes or until carrots are tender and liquid has evaporated."
+    ],
+    "group": "equal"
+  },
+  {
+    "recipe_key": 86606,
+    "source_ref": 109889,
+    "name": "Black Bean Chile",
+    "recipe_category": "Vegetable",
+    "keywords": [
+      "Low Protein",
+      "Low Cholesterol",
+      "Healthy",
+      "Beginner Cook",
+      "< 4 Hours",
+      "Easy",
+      "Inexpensive"
+    ],
+    "ingredient_parts": [
+      "onion",
+      "garlic",
+      "olive oil",
+      "fresh cilantro",
+      "tomatoes and green chilies",
+      "black beans",
+      "diced green chilies",
+      "oregano",
+      "cumin"
+    ],
+    "quantities_raw": [
+      "1",
+      "2",
+      "1",
+      "1",
+      "1",
+      "5",
+      "2",
+      "1",
+      "1",
+      "1"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 6,
+    "recipe_yield": null,
+    "instructions": [
+      "Saute onion and garlic in olive oil.",
+      "Add jalapeno pepper, if desired; this chile is spicy enough for most people without the jalapeno.",
+      "Combine all ingredients, except the cilantro, in a pot or crockpot.",
+      "Cook on low heat until the chile is warmed through.",
+      "Add cilantro about 15 minutes before serving.",
+      "Leftovers can be frozen and reheated later."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 240466,
+    "source_ref": 301800,
+    "name": "Mussels in Spicy Coconut Broth",
+    "recipe_category": "Mussels",
+    "keywords": [
+      "< 30 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "light coconut milk",
+      "fresh ginger",
+      "sugar",
+      "lemon juice",
+      "curry powder",
+      "salt",
+      "mussels",
+      "fresh basil"
+    ],
+    "quantities_raw": [
+      "1⁄2",
+      "1⁄4",
+      "1",
+      "2",
+      "2",
+      "1",
+      "1",
+      "2",
+      "1⁄4"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 2,
+    "recipe_yield": null,
+    "instructions": [
+      "Combine first 7 ingredients in a Dutch oven, and bring to a boil. Add mussels; cover and cook 5 minutes or until shells open.",
+      "Remove from heat; discard any unopened shells. Spoon 1 1/2 cups broth mixture into each of 2 soup bowls.",
+      "Divide mussels evenly among each soup bowl. Garnish with chopped basil."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 8923,
+    "source_ref": 14296,
+    "name": "Cherokee Casserole",
+    "recipe_category": "Long Grain Rice",
+    "keywords": [
+      "Rice",
+      "Meat",
+      "Native American",
+      "Kid Friendly",
+      "< 30 Mins",
+      "Oven",
+      "Beginner Cook",
+      "Stove Top",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "long-grain rice",
+      "tomatoes",
+      "ground beef",
+      "onion",
+      "bay leaf",
+      "oregano",
+      "garlic powder",
+      "cumin",
+      "green olives",
+      "cheddar cheese",
+      "salt"
+    ],
+    "quantities_raw": [
+      "1",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1⁄2",
+      "1⁄8",
+      "1⁄8",
+      "1⁄8",
+      "12",
+      "3",
+      ""
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 6,
+    "recipe_yield": null,
+    "instructions": [
+      "Cook rice per normal cooking instructions.",
+      "While rice cooks, brown meat and cook onions until tender.",
+      "Drain excess fat from meat.",
+      "Combine meat and onions in skillet, and add crushed tomatoes, mushroom soup, bay leaf, oregano, garlic powder, cumin, salt, pepper, olives.",
+      "Simmer together in skillet until rice is finished cooking.",
+      "Add rice, and mix all ingredients well.",
+      "Top casserole with cheese until melted."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 266579,
+    "source_ref": 335084,
+    "name": "Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",
+    "recipe_category": "Beans",
+    "keywords": [
+      "Vegetable",
+      "Chinese",
+      "Asian",
+      "Vegan",
+      "Savory",
+      "Stove Top",
+      "< 4 Hours"
+    ],
+    "ingredient_parts": [
+      "yellow onion",
+      "garlic cloves",
+      "salt",
+      "Chinese five spice powder",
+      "acorn squash",
+      "bartlett pears",
+      "vegetable broth",
+      "azuki beans",
+      "fresh lime juice",
+      "soy sauce"
+    ],
+    "quantities_raw": [
+      "2",
+      "1",
+      "1",
+      "2",
+      "2",
+      "1⁄2",
+      "1⁄2",
+      "2",
+      "2",
+      "4",
+      "15",
+      "1",
+      "4",
+      "2",
+      "1⁄2",
+      "1"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 6,
+    "recipe_yield": null,
+    "instructions": [
+      "Preheat a large stock pot over medium heat. Add the oil and sauté the onions and peppers for about 10 minutes, or until onions just begin to brown.",
+      "Add the ginger and garlic and sauté a minute more. Add the salt, Chinese five spice, acorn squash and pear and cook for another minute, stirring often. Add the vegetable broth. Cover and bring to a boil. Once boiling, lower the heat just a bit to simmer briskly for about 20 more minutes, or until the squash is tender.",
+      "Puree half the soup using either an immersion blender or by transferring half the soup to a food processor or blender and then back into the rest of the soup (don’t forget to let the soup cool a bit so that the steam does not compress in the processor and kill you).",
+      "Add the azuki beans and lime. Cover and simmer on low, just until the beans are heated through. Meanwhile prepare the mushrooms.",
+      "Preheat a heavy bottomed skillet over medium high heat. Add the oils and sauté the mushrooms for about 7 minutes, until they are soft. Add the soy sauce and stir constantly until the soy sauce is absorbed (about 1 minute).",
+      "Ladle soup into bowls and top with sautéed mushrooms."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 390061,
+    "source_ref": 491940,
+    "name": "Linguine With Sun Dried Tomato Sauce",
+    "recipe_category": "< 30 Mins",
+    "keywords": [],
+    "ingredient_parts": [
+      "sun-dried tomato packed in oil",
+      "garlic cloves",
+      "crushed tomatoes in puree",
+      "heavy cream",
+      "pepper",
+      "parmesan cheese"
+    ],
+    "quantities_raw": [
+      "3⁄4",
+      "3",
+      "28",
+      "1⁄3",
+      "9",
+      "1⁄4",
+      "1",
+      "1⁄4"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": null,
+    "recipe_yield": null,
+    "instructions": [
+      "In large skillet, heat oil from tomatoes. Add garlic and cook over medium heat. Add canned tomatoes and sun-dried tomatoes and bring to a boil over medium heat.",
+      "Reduce heat and simmer, 5 minutes. Add cream and cook 5 minutes to blend flavors.",
+      "Meanwhile cook pasta. Drain.",
+      "Season sauce with pepper and stir in vinegar. Spoon over pasta and sprinkle with cheese."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 69573,
+    "source_ref": 89608,
+    "name": "Cheesy Scalloped Corn Bake",
+    "recipe_category": "Corn",
+    "keywords": [
+      "Vegetable",
+      "< 60 Mins",
+      "Oven"
+    ],
+    "ingredient_parts": [
+      "eggs",
+      "butter",
+      "margarine",
+      "evaporated milk",
+      "green bell pepper",
+      "celery",
+      "onion",
+      "sugar",
+      "seasoning salt",
+      "pepper",
+      "cheddar cheese"
+    ],
+    "quantities_raw": [
+      "1",
+      "2",
+      "1⁄2",
+      "1⁄4",
+      "1⁄4",
+      "1",
+      "1",
+      "1",
+      "1",
+      "3",
+      "",
+      "",
+      "1"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 4,
+    "recipe_yield": null,
+    "instructions": [
+      "Set oven to 350 degrees.",
+      "Butter a 1-quart casserole dish.",
+      "In a bowl mix all ingredients together until well blended.",
+      "Transfer to prepared casserole dish.",
+      "Bake uncovered for 30-35 minutes.",
+      "Remove and top with shredded cheddar cheese (any amount desired) return to oven for 3-5 minutes or until cheese is melted."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 266468,
+    "source_ref": 334946,
+    "name": "Barley Risotto With Caramelized Leeks and Mushrooms",
+    "recipe_category": "< 4 Hours",
+    "keywords": [],
+    "ingredient_parts": [
+      "olive oil",
+      "leeks",
+      "cremini mushrooms",
+      "pearl barley",
+      "salt",
+      "fresh ground black pepper",
+      "fresh flat-leaf parsley"
+    ],
+    "quantities_raw": [
+      "2",
+      "3",
+      "3",
+      "1",
+      "1",
+      "1⁄4",
+      "2",
+      "2"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 6,
+    "recipe_yield": null,
+    "instructions": [
+      "Heat the oil in a large saucepan over medium heat. Add leek; cook 20 minutes or until tender and golden, stirring occasionally.",
+      "Add mushrooms; cook 5 minutes or until tender, stirring occasionally. Add barley, salt, and pepper; cook 1 minute, stirring constantly.",
+      "Add broth; bring to a boil. Cover, reduce heat, and simmer 30 minutes, stirring occasionally.",
+      "Uncover and cook 5 minutes or until liquid is absorbed. Stir in parsley."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 389372,
+    "source_ref": 491043,
+    "name": "Better Tater Tot Casserole",
+    "recipe_category": "One Dish Meal",
+    "keywords": [
+      "Potato",
+      "Vegetable",
+      "Meat",
+      "< 60 Mins",
+      "Inexpensive"
+    ],
+    "ingredient_parts": [
+      "green beans",
+      "onion",
+      "garlic cloves",
+      "seasoning salt",
+      "ground beef",
+      "cheddar cheese",
+      "milk"
+    ],
+    "quantities_raw": [
+      "2",
+      "1",
+      "1",
+      "2",
+      "1⁄2",
+      "2",
+      "1",
+      "1",
+      "1⁄2",
+      "1⁄2"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": null,
+    "recipe_yield": "1 casserole",
+    "instructions": [
+      "Brown ground beef.",
+      "Add onions and garlic.",
+      "Fry until onions are translucent.",
+      "Add green beans, both soups, milk, and tater tots, reserving about 2 cups of tater tots for the top.",
+      "mix well.",
+      "place mixture in casserole dish.",
+      "place reserved tater tots on top, pushing in slightly.",
+      "sprinkle seasoning salt on top.",
+      "sprinkle grated cheese on top.",
+      "bake uncovored at 350 for 30 minutes."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 35749,
+    "source_ref": 47403,
+    "name": "Black Pepper Pork with Ramen Noodles",
+    "recipe_category": "Pork",
+    "keywords": [
+      "Meat",
+      "Chinese",
+      "Asian",
+      "< 60 Mins",
+      "Stir Fry"
+    ],
+    "ingredient_parts": [
+      "boneless pork chop",
+      "garlic",
+      "onion",
+      "broccoli florets",
+      "black pepper"
+    ],
+    "quantities_raw": [
+      "3⁄4",
+      "2",
+      "1⁄3",
+      "1",
+      "2",
+      "2",
+      "1",
+      "4",
+      "1⁄2",
+      "1"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 4,
+    "recipe_yield": null,
+    "instructions": [
+      "Cut pork across grain into 1/4 inch wide strips; coat with mixture of garlic and 1 tbs. Stir-Fry Sauce.",
+      "Let stand 15 minutes.",
+      "Meanwhile, cook noodles only (not seasoning packet) in 2 qts boiling water 2 minutes; drain.",
+      "Heat 1 tbs oil in hot wok or large skillet over high heat.",
+      "Add pork and stir-fry 2 minutes; remove.",
+      "Reduce heat to medium-high; heat remaining vegetable oil in same pan.",
+      "Add onions; stir fry 1 minute.",
+      "Add broccoli and 2 tbs water; stir-fry 3 minutes.",
+      "Stir in pork, noodles, and remaining stir-fry sauce and pepper.",
+      "Cook, stirring well, until all ingredients are coated with sauce.",
+      "Add sesame oil and toss well to combine."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 412453,
+    "source_ref": 519982,
+    "name": "Stir Fry Vegan Ramen",
+    "recipe_category": "Vegetable",
+    "keywords": [
+      "Asian",
+      "Vegan",
+      "< 30 Mins"
+    ],
+    "ingredient_parts": [
+      "water",
+      "black pepper",
+      "bean sprouts",
+      "carrot",
+      "spring onion",
+      "chili peppers",
+      "light soy sauce",
+      "peri-peri",
+      "chili sauce",
+      "dark soy sauce"
+    ],
+    "quantities_raw": [
+      "3",
+      "1",
+      "1",
+      "1",
+      "100",
+      "1",
+      "1",
+      "3",
+      "3",
+      "2",
+      "1"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 4,
+    "recipe_yield": null,
+    "instructions": [
+      "cooked instant noodles as package drain and set aside.",
+      "with sesame oil brown onion then add carrot saute for one minute then noodle.",
+      "add sauce and half cup of water and mix well then add beansprouts with spring onion for 2 minute.",
+      "if its too dry add all water then mix well til almost dry.",
+      "off heat top black pepper and mix well and serve."
+    ],
+    "group": "more"
+  },
+  {
+    "recipe_key": 22064,
+    "source_ref": 30525,
+    "name": "Smoked Salmon and Basil Rolls with Creme Fraiche or Sour Cream",
+    "recipe_category": "European",
+    "keywords": [
+      "Potluck",
+      "Summer",
+      "< 30 Mins",
+      "Refrigerator",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "smoked salmon",
+      "creme fraiche",
+      "sour cream",
+      "fresh basil",
+      "fresh basil leaves"
+    ],
+    "quantities_raw": [
+      "12",
+      "3⁄4",
+      "3⁄4",
+      "12"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 8,
+    "recipe_yield": null,
+    "instructions": [
+      "Place 1 salmon slice on work surface.",
+      "Spread 2 teaspoons creme fraiche over salmon.",
+      "Sprinkle with 2 teaspoons chopped basil.",
+      "sprinkle with pepper.",
+      "Starting at 1 short end, roll up salmon slice, enclosing filling.",
+      "Spread 1 teaspoon creme fraiche over top of roll; sprinkle with 1 teaspoon chopped basil.",
+      "Cut roll crosswise into 5 slices (keep sliced roll together).",
+      "Repeat with remaining salmon, creme fraiche, and chopped basil.",
+      "(Can be made 6 hours ahead. Transfer salmon rolls to plate, cover and chill.) Arrange whole basil leaves on platter.",
+      "Using small spatula, top each basil leaf with 1 sliced salmon roll, fanning slightly."
+    ],
+    "group": "fewer"
+  },
+  {
+    "recipe_key": 366111,
+    "source_ref": 461951,
+    "name": "Special Thai Chicken Salad",
+    "recipe_category": "One Dish Meal",
+    "keywords": [
+      "Chicken",
+      "Poultry",
+      "Meat",
+      "Asian",
+      "Weeknight",
+      "< 60 Mins"
+    ],
+    "ingredient_parts": [
+      "boneless chicken breasts",
+      "chicken thighs",
+      "fresh basil",
+      "fresh cilantro",
+      "fish sauce",
+      "garlic cloves",
+      "soy sauce",
+      "lemons",
+      "lime juice",
+      "fresh ground black pepper",
+      "water",
+      "lemongrass",
+      "kaffir lime leaf",
+      "fish sauce",
+      "soy sauce",
+      "garlic cloves",
+      "brown sugar",
+      "lime juice",
+      "fresh cilantro",
+      "chili sauce"
+    ],
+    "quantities_raw": [
+      "2 -4",
+      "",
+      "1⁄2",
+      "4",
+      "6",
+      "1",
+      "2",
+      "1",
+      "1⁄4",
+      "1",
+      "1",
+      "1",
+      "3",
+      "2",
+      "1",
+      "2",
+      "3",
+      "1 -2"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 4,
+    "recipe_yield": null,
+    "instructions": [
+      "Mix the marinade ingredients together in a cup except for the ground pepper. Slather over chicken, ensuring all parts are equally covered with marinade. Then press coursely-ground peppercorn all over the chicken's surface. Allow to marinate in the refrigerator for at least 10 to 15 minutes (or up to 24 hours).",
+      "If Using the Oven: Set oven to BROIL and place chicken on a broiling pan or a foil-lined baking sheet (turn out the sides of the foil to prevent juices from spilling into oven).",
+      "Place chicken on second-to-highest rung of your oven, allowing it to cook 5 minutes each side, then turning. Continue broiling and turning until cooked (chicken will be lightly charred around the edges). Use the leftover marinade to baste chicken the first time you turn it.",
+      "If Grilling the Chicken: Place chicken over a hot grill and cook until well done. Use leftover marinade to baste chicken when you turn it the first time.",
+      "While chicken is cooking, prepare the salad greens and dressing. To make the dressing: place water, lemongrass and lime leaf strips (or zest) in a sauce pan and bring to a boil. Boil for 1 minute (this will soften the lemongrass and bring out the flavor of the lime leaf). Remove from heat.",
+      "Add the rest of the dressing ingredients and mix well.",
+      "Taste-test the dressing. It should be tangy - a balance of salty, sweet, spicy, and sour. Adjust it to your taste by adding more fish sauce if not salty enough, more lime juice if too salty or sweet, more sugar if too sour or more chili sauce if not spicy enough for your taste.",
+      "Toss the salad with the dressing. Portion out the salad among individual plates, and top with strips of the hot chicken. Sprinkle with fresh basil and coriander; serve immediately while chicken is still warm."
+    ],
+    "group": "fewer"
+  },
+  {
+    "recipe_key": 416891,
+    "source_ref": 526146,
+    "name": "Avocado Lime Rice With Grilled Shrimp",
+    "recipe_category": "Rice",
+    "keywords": [
+      "Avocado",
+      "Vegetable",
+      "< 60 Mins",
+      "Easy"
+    ],
+    "ingredient_parts": [
+      "long grain white rice",
+      "avocado",
+      "lime juice",
+      "ground cumin",
+      "salt",
+      "fresh cilantro",
+      "parsley",
+      "frozen shrimp",
+      "olive oil",
+      "garlic",
+      "lime zest"
+    ],
+    "quantities_raw": [
+      "2",
+      "1",
+      "2",
+      "1",
+      "1⁄2",
+      "2",
+      "20",
+      "2",
+      "1",
+      "2"
+    ],
+    "quantities_aligned": false,
+    "recipe_servings": 4,
+    "recipe_yield": "4",
+    "instructions": [
+      "Cook rice according to package directions. Meanwhile mix avocado with lime juice, cumin and half the salt and half the cilantro or parsley. Stir into rice.",
+      "Meanwhile, preheat grill to high, grease grate well. Toss shrimp with oil, garlic, lime zest and remaining salt. Thread evenly onto metal or soaked wooden skewers. Grill skewers, for 2 to 3 minutes per side or until shrimp start to curl and turn pink.",
+      "Serve rice with shrimp skewers. Garnish with remaining cilantro or parsley."
+    ],
+    "group": "fewer"
+  }
+]

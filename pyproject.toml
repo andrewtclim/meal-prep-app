@@ -17,6 +17,7 @@ dev = [
     "alembic>=1.20.0",
 ]
 pipelines = [
+    "anthropic>=2.3.0",
     "pandas>=3.1.0",
     "pyarrow>=26.0.0",
 ]
