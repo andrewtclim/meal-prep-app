@@ -1,0 +1,16 @@
+name: recipe_transforms
+version: "0.1.0"
+profile: warehouse
+
+model-paths: ["models"]
+
+models:
+  recipe_transforms:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+seeds:
+  recipe_transforms:
+    +schema: seeds

@@ -544,3 +544,13 @@ def test_bumping_the_version_reopens_every_recipe(tmp_path, monkeypatch):
     assert load_done_keys(path) == {9001}
     monkeypatch.setattr(augment_module, "SCHEMA_VERSION", SCHEMA_VERSION + 1)
     assert load_done_keys(path) == set()
+
+
+def test_dbt_cuisine_parent_seed_matches_cuisine_parent():
+    """The dbt seed is a copy of CUISINE_PARENT; fail here if the two drift apart."""
+    import csv
+    from pathlib import Path
+
+    with open(Path("dbt/seeds/cuisine_parent.csv")) as f:
+        seed = {row["cuisine"]: row["parent"] for row in csv.DictReader(f)}
+    assert seed == CUISINE_PARENT

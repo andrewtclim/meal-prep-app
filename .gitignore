@@ -25,3 +25,9 @@ __pycache__/
 
 # Pipeline data (never committed; re-downloadable from Kaggle)
 data/
+
+# dbt
+dbt/.user.yml
+dbt/target/
+logs/
+dbt/dbt_packages/

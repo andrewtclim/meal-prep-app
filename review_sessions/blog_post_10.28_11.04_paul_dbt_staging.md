@@ -6,7 +6,9 @@ Started stage 3 of the Food.com pipeline: loading the cleaned and LLM-augmented 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
-| (pending) `feat/dbt-staging` | dbt dependency, then migration, `load.py`, staging models | Not pushed yet. Branched from `feat/foodcom-augment` (PR #18), so it also shows #17 and #18 until they merge |
+| [#20](https://github.com/andrewtclim/meal-prep-app/pull/20) | Migration (`raw` schema, recipe source columns, `is_extra`, `recipe_cuisine`, units), `load.py` with tests, dbt dependency, DECISIONS #27 and docs | Open. Base is `feat/foodcom-augment` (PR #18), so the diff shows only this work; change the base to `main` after #17 and #18 merge |
+| [#21](https://github.com/andrewtclim/meal-prep-app/pull/21) | dbt project, connection profile, `sources.yml`, `stg_recipes` and 8 tests, `DBT_*` in `.env.example`, dbt concepts | Open (draft). Base is `feat/dbt-staging` (#20), so the diff shows only dbt files; it depends on #20 for the `raw` table and must merge after #18 and #20 |
+| (next) | Intermediate models (ingredients, cuisines), then the upsert into `public` | Not started |
 
 ## Session: 2026-10-29
 ### What we worked on and why
@@ -341,6 +343,65 @@ With a file that has two lines for `source_ref` 47403 (an older and a newer answ
 
 Sample rows: 47403 "Black Pepper Pork with Ramen Noodles" has 5 listed ingredients and 4 extras, cuisine `chinese`; 71222 "Mama's Lasagna" has 8 and 2 extras, `italian`; 14296 "Cherokee Casserole" has 11 and 2 extras, `native_american` and `american`. Also, 30525 (smoked salmon rolls) got `other`, a reminder that the model's cuisine labels still need the hand check.
 
+### PR #20 opened, then PR B1: the dbt project (branch `feat/dbt-project`, stacked on #20)
+PR #20 is open as a draft with base `feat/foodcom-augment`. gh is not logged in on this machine and the repo page could not be fetched, so we checked what CI runs locally instead: `ruff` clean, 86 tests pass, `uv lock --check` clean. PR B is split in two: B1 is the project files plus `stg_recipes` and its tests, B2 is the ingredient and cuisine models and then the upsert. The difficulty by piece: project files easy, `stg_recipes` easy, unpacking the JSON into one row per ingredient medium, tests easy, the upsert hard (a design choice first), dbt in CI medium.
+
+**`dbt/dbt_project.yml`, line by line.** The project's front page: what it is called, which connection to use, where the SQL lives and what to do with it.
+```yaml
+name: warehouse
+version: "0.1.0"
+profile: warehouse
+model-paths: ["models"]
+models:
+  warehouse:
+    staging:
+      +materialized: view
+```
+- `name`: a generic label, so the app name is not in module names (DECISIONS #13). `version` is required by dbt and unused.
+- `profile`: a pointer to the connection named `warehouse` in `profiles.yml`; the connection details are not in this file. A missing profile stops dbt loudly.
+- `model-paths`: where the model files live (`dbt/models/`). A model is one `.sql` file holding one `SELECT`.
+- The `models:` block reads like a path: settings for models, in the project named `warehouse` (matches `name:`, not the profile), in the folder `models/staging/` (matches the folder), build as a view. A `+` marks a dbt setting and not a folder. If `name:` changed but `models: warehouse:` did not, dbt would only warn about unused config and the settings would silently stop applying; a wrong profile name fails loudly.
+- A view is a saved query that holds no data of its own, so it takes no space (the free tier is tight, DECISIONS #25). Staging models are just a cleaned lens on `raw`. The tradeoff is the query reruns on every read.
+
+**`dbt/profiles.yml` and the double curly brackets.** The profile `warehouse` is the connection that `profile: warehouse` points to; dbt's Postgres adapter does not accept a `DATABASE_URL`, so the host, port, user, password and database name come from five variables (`DBT_HOST`, `DBT_PORT`, `DBT_USER`, `DBT_PASSWORD`, `DBT_DBNAME`) set in the git-ignored `.env`. The user on Supabase's pooler is `postgres.<project-ref>`, not just `postgres`. `schema: staging` is where dbt builds the views; dbt creates it if missing.
+
+The `{{ ... }}` is Jinja, the templating language dbt uses: dbt runs the code inside and substitutes the result before reading the file. `host: "{{ env_var('DBT_HOST') }}"` becomes the real host. `env_var('DBT_PORT', '5432')` takes a default as its second argument. `| as_number` is a Jinja filter (the `|` passes a value to a function): environment variables are text and the port must be a number. The quotes are YAML's. The same brackets appear in SQL models: `{{ source('raw', 'foodcom_prepared') }}` becomes the real table name, and `{{ ref('stg_recipes') }}` names another model and tells dbt to build it first. A second kind, `{% ... %}`, holds logic such as `{% if %}` and `{% for %}`. Why dbt does this: it lets a file hold values that change (a secret, a table name) without hardcoding them, which is also why `profiles.yml` is safe to commit: it contains the names of the variables, not their values.
+
+**Renaming the project (a mistake worth keeping).** Paul changed `name:` in `dbt_project.yml` to `meal-prep-app`. Three problems: dbt project names may contain only letters, digits and underscores, so hyphens are likely rejected (`meal_prep_app` would be valid); the `models:` block still said `warehouse:`, and since that key must equal `name:`, dbt would silently stop applying the `staging` settings; and DECISIONS #13 says to keep the app name out of package and module names so a rename is cheap (`meal-prep-app` is the repo name, not the app name). The `profile:` line is a separate pointer to `profiles.yml` and is unaffected. Fix: keep `name: warehouse`, or rename in both `name:` and the `models:` key with underscores.
+
+Tested instead of guessed, with `dbt parse` on a throwaway copy in `/tmp` (dummy connection variables, repo untouched). With `name: meal-prep-app` dbt refuses to start: `at path ['name']: 'meal-prep-app' does not match '^[^\d\W]\w*$'`, a name must start with a letter or underscore and then use only letters, digits and underscores. With `name: meal_prep_app` and `models: warehouse:` unchanged, dbt parses but only warns: `Configuration paths exist in your dbt_project.yml file which do not apply to any resources. ... - models.warehouse.staging`. That is the quiet failure: the build would run but `+materialized: view` would apply to nothing, so a rename must change `name:` and the `models:` key together. Lesson: when unsure whether a tool accepts something, run it on a copy and read the message.
+
+**First `dbt debug` run: two errors, two causes.** `dbt debug` is dbt's "does it work" check: it validates `dbt_project.yml`, validates `profiles.yml` and then really connects to the database.
+1. `dbt_project.yml [ERROR invalid]`: the name was still `meal-prep-app` (hyphens are not allowed).
+2. `could not translate host name "<the host part>" to address`: the five `DBT_` lines in `.env` still held the stand-in text from the instructions, `<the host part>` and so on. The angle brackets are also why uv warned `Failed to parse environment file ... at position 5`. The error message itself showed the placeholder, which is how we spotted it; a quick check (length of each value and whether it still contains `<` or `>`, without printing any secret) confirmed it for `DBT_HOST`, `DBT_USER` and `DBT_PASSWORD`.
+Lessons: replace every placeholder, with no angle brackets or quotes; the value for `DBT_PASSWORD` must be the real password and not the URL-encoded form that appears inside `DATABASE_URL` (`%40` is `@`); `dbt debug` prints the host and user, so read the output before sharing it. The profile part passed (`profiles.yml file [OK found and valid]`), so the structure of the file was right.
+
+**Second `dbt debug` run: connection works.** After replacing the placeholders, `Connection test: [OK connection ok]`: dbt reached Supabase through the pooler with the five `DBT_` variables. One check still failed, the same name error (`name: meal-prep-app`), which is a project file problem and not a connection problem. `dbt debug` checks each thing separately, so one failure does not hide the others; read all the lines, not just the last. The output shows the Supabase project ref inside the user name. It is an identifier and not a password, but worth a glance before sharing output.
+
+**Naming decision: project `recipe_transforms`, connection `warehouse`.** Paul pointed out that using `warehouse` for both the project name and the profile name is confusing, and he is right: they are two different things (the project is the folder of SQL and settings, the profile is the database connection) that only matched because we typed the same word twice. The rules are: the project name uses only letters, digits and underscores; `name:` and the key under `models:` are the same word; `profile:` matches the top key in `profiles.yml`. So the two names can differ freely. Chosen: `name: recipe_transforms` (and `models: recipe_transforms:`), which says what the project does and keeps the app name out (DECISIONS #13), and the connection stays `warehouse`. The alternative was to rename the connection (for example `supabase`) in `profile:` and the top key of `profiles.yml`.
+
+**Why `--project-dir dbt --profiles-dir dbt`.** By default dbt looks for `dbt_project.yml` in the current folder (and parents) and for `profiles.yml` in the current folder and then in a hidden `~/.dbt/`. Our project lives in a `dbt/` subfolder (DECISIONS #24) while commands run from the repo root (where `pyproject.toml` and `.env` are), so dbt would find nothing; the flags say where to look. Ways to avoid typing them: `cd dbt` (but then `.env` is `../.env`), `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` in `.env` (less obvious to teammates), or a wrapper such as a `Makefile` (one more file). We keep the explicit flags: nothing is hidden and CI can use the same command.
+
+**Files dbt writes that must stay out of git.** `dbt/.user.yml` (an anonymous id for dbt's usage statistics, created on the first command), `dbt/target/` (compiled SQL and run results), `dbt/logs/` and `dbt/dbt_packages/`. None hold secrets, but they are machine-specific and regenerated. Added to `.gitignore`. A check with `git status` found one more: dbt writes `logs/` relative to the folder it is run from, which is the repo root, so a stray `logs/` appeared there and needs its own `.gitignore` line (`target/` is relative to the project, so `dbt/target/` is right). `git check-ignore -v <path>` shows which rule ignores a path.
+
+**Same mistake again, caught by reading the file.** After renaming the project to `recipe_transforms`, the `models:` key still said `warehouse:`. dbt would only warn ("unused configuration paths") and `+materialized: view` would apply to nothing. Whenever `name:` changes, the `models:` key changes with it.
+
+**`dbt debug` passes: `All checks passed!`.** It validated the project file, the profile and a real connection. A pass does not mean everything is right: it did not catch the stale `warehouse:` key under `models:` (only a warning at parse time) or the untracked `logs/` folder. `git status` and reading the file did.
+
+**Step: `dbt/models/staging/sources.yml`.** A source tells dbt about a table it did not build, here `raw.foodcom_prepared`, written by `load.py`. Declaring it lets models read it with `{{ source('raw', 'foodcom_prepared') }}` instead of a hardcoded name, so dbt can show where data comes from, rename the table in one place, and test the source itself. In the file, `name: raw` is the source's name (first argument of `source()`), `schema: raw` is the database schema (same word, separate setting), each entry under `tables:` is the second argument, `description` is documentation dbt can render, and `data_tests` are checks run by `dbt test` (`unique` and `not_null` on `source_ref`, `not_null` on `answer`). The tests repeat what the primary key enforces, but on the table as dbt sees it, and a test is what keeps failing visibly if the table is ever recreated without that constraint.
+
+**`sources.yml`, explained simply.** A source is a table dbt did not build (`raw.foodcom_prepared` was made by `load.py`), and `sources.yml` introduces it. Kitchen picture: a model is a dish, a source is an ingredient delivered from outside, and `sources.yml` is the delivery list. Why not hardcode `raw.foodcom_prepared` in SQL: the name would be repeated in every model; with `{{ source('raw', 'foodcom_prepared') }}` a rename is one change, dbt can draw where data comes from, and it can test the source itself.
+- `version: 2` is the file format, never changes.
+- `name: raw` is the source's label (first word in `source('raw', ...)`); `schema: raw` is the real database schema. Same word, separate settings: a source named `food_data` with `schema: raw` would be read as `source('food_data', ...)` and still come from the `raw` schema.
+- Each entry under `tables:` is a real table name and the second word in `source()`.
+- `description` is documentation only; dbt can render it as a website. `>` starts a paragraph that continues on the next lines.
+- `data_tests` under a column: `unique` and `not_null` run with `dbt test`. dbt writes a `SELECT` that finds rows breaking the rule and the test fails if it finds any. `source_ref` is already a primary key, but the test still matters: if the table is ever recreated without the key, the database stops protecting us and the test fails visibly; it also documents the rule and will run in CI.
+Nothing builds from a source alone; it matters when `stg_recipes.sql` uses it and when `dbt test` runs.
+
+**Too many matching names, and the fix.** Paul asked why the same words keep appearing as labels. The reuse is real: `raw` was the source label, the schema in `sources.yml`, the first word of `source('raw', ...)` and the Postgres schema itself; `staging` is both a folder and a schema; `warehouse` is the connection. In dbt the folder, schema and label often line up on purpose, but while learning you cannot tell whether a word is a label we chose, a real database name or a folder. Rule of thumb for reading a dbt file: a name under `name:` is something we define; a name under `schema:`, a table or a file name is a real thing in the database or on disk; a name inside `{{ }}` is a reference to one of those. We gave the source label its own word: `name: foodcom`, `schema: raw`, table `foodcom_prepared`, so models read `{{ source('foodcom', 'foodcom_prepared') }}` and `raw` appears only where it is the real schema. `staging` stays, since folder and schema are meant to line up.
+
+**First `dbt parse` on the project.** `dbt parse` reads every file and reports mistakes without touching the database. It passed; the only warning was `models.recipe_transforms.staging` having nothing to apply to, which is expected until the first model exists. The `sources.yml` file did not exist when first asked about: the content had been shown in chat but not created. A file shown in chat is not a file on disk; check with `git status` or the file tree.
+
 ### Docs updated for this PR (CLAUDE.md: docs change in the same PR as the code)
 - **DECISIONS #27 (Proposed):** stage 3 split by tool. Alembic creates the schema, columns, `is_extra`, `recipe_cuisine` and the units; `load.py` replaces `raw.foodcom_prepared` (loader owns that table); dbt is in a `transforms` group; the final write into `public` is an upsert because other tables will reference `recipe_id`. Open inside it: how the upsert runs, and real ingredient-name normalization.
 - **DATA_MODEL.md:** `is_extra`, the new `recipes` columns and `recipe_cuisine` are now created (the text said "not created yet"); `raw` for Food.com holds prepared data, not the untouched file.
@@ -382,3 +443,189 @@ The list is explicit, not imported from `augment.py`, so bumping the version in 
 - Why the migration copies the lists instead of importing them, and why hardcoded ids break an identity column. Both were first-draft mistakes worth remembering.
 - We first read `DATABASE_URL` as empty. The check only printed the variable name, not its value, and `.env.example` really is empty, which made the mistake look right. When you check a secret, check its length or shape without printing it.
 - dbt does not load data. It only transforms what is already in Postgres, so a loader has to exist first.
+
+### Layers and how data gets into `public` (2026-11-01)
+
+**Layers.** At Paul's work dbt has staging, intermediate and mart. Here: staging (`stg_recipes`, a thin cleanup view) and intermediate (unpacking the jsonb lists into rows, matching names to `position`, normalizing ingredient names). No `marts/` folder yet, because our final tables are the app tables in `public`, which Alembic owns, not dbt.
+
+**Why not dbt incremental models for `public` (option 1).** dbt wants to own the table it writes (it would create it without constraints if missing); `--full-refresh` would drop `recipes` (and user-saved recipes with it); the default delete-then-insert strategy gives rows new ids and breaks anything that references them; `recipe_ingredient` needs ids from the parent insert, so dbt would read from and write to `public` at once; and the select must match the table's columns exactly. Leaning option 2: dbt stops at the intermediate layer and a short `INSERT ... ON CONFLICT` step writes to `public`. Open until the intermediate models exist; it will become a `DECISIONS.md` entry.
+
+**Why a view can be rebuilt but `recipes` cannot.** Nothing points at a view. `recipes` rows have a `recipe_id` stored in other tables, so delete-and-reinsert would give recipe 7 a new id and orphan or cascade-delete its ingredient rows. Upsert updates the row in place, so the id stays.
+
+**Why keep `recipe_id` when `source_ref` is already unique.** Using `source_ref` as the key would stop ids changing, but the delete would still be blocked or cascade, user-saved recipes have no `source_ref`, and a second source could reuse the same numbers. `recipe_id` is ours and never changes meaning; `source_ref` is the unique lookup key that `ON CONFLICT (source_ref)` uses to find the existing row.
+
+**Rule for `public`.** Tables other tables point at (`recipes`, `ingredients`, `units`, `cuisines`) are upsert only. Leaf tables (`recipe_ingredient`, `recipe_cuisine`) can be replaced per recipe, which also removes ingredients the LLM dropped, but only for Food.com recipes (rows with a `source_ref`), never user-saved ones.
+
+### First model: `stg_recipes` (2026-11-01)
+
+`dbt/models/staging/stg_recipes.sql` is a staging view over `raw.foodcom_prepared`: it renames `recipe_name` to `name` (the app's column name), passes the plain columns through, and uses `answer -> 'key'` to pull `cuisines`, `ingredients` and `extra_ingredients` out of the `answer` jsonb as `*_json` columns. It does not unpack lists into rows or clean names; that belongs to the intermediate layer.
+
+```sql
+answer -> 'cuisines' as cuisines_json,
+from {{ source('foodcom', 'foodcom_prepared') }}
+```
+
+`->` takes one key out of a jsonb object and returns its value as jsonb (here a list). A missing key returns `NULL` with no error, so a dropped key would flow silently into later models. `load.py`'s `validate_answer` is the first catch; a `not_null` dbt test on the `*_json` columns is the second (to add in `stg_recipes.yml`).
+
+**First `dbt run`.** `1 of 1 OK created sql view model staging.stg_recipes`, `PASS=1 ERROR=0`; the view appears in the `staging` schema in Supabase. The line "Unable to do partial parsing because saved manifest not found" is harmless: dbt caches its parsed project in `target/` and only reparses changed files; on a first run (or fresh clone/CI) there is no cache, so it does a full parse.
+
+Flow so far: `raw.foodcom_prepared` (written by `load.py`) -> `staging.stg_recipes` (view built by dbt).
+
+**Tests on the raw source passed.** `dbt test` ran the 3 tests from `sources.yml` (`unique` and `not_null` on `source_ref`, `not_null` on `answer`): `PASS=3`. A test is a query that selects bad rows; zero rows means pass. Test names read `source_<test>_<source label>_<table>_<column>`, which is another reason a clear source label (`foodcom`) helps.
+
+**Tests on the view.** `dbt/models/staging/stg_recipes.yml` adds `unique`/`not_null` on `source_ref` and `not_null` on `cuisines_json` and `ingredients_json`. The last two catch the silent-`NULL` case. YAML note: `data_tests: [unique, not_null]` and the dashed block list are the same thing; we use the block style everywhere because tests with arguments (like `accepted_values`) only fit in block form.
+
+**Which columns staging keeps.** `stg_recipes` takes only what downstream models need: the six recipe columns that map to `public.recipes`, `ingredient_parts`, and the three lists from `answer`. Left out: `keywords` (nothing in `public` uses it), `quantities_raw` (the LLM's `quantity`/`unit` replace it), `model` and `loaded_at` (load bookkeeping). `answer` only has three keys and we take all three.
+
+**A gap caught.** The LLM answer holds only `position`, `quantity`, `unit` per ingredient, so the ingredient names have to come from `ingredient_parts`, matched by position. The first draft of `stg_recipes` left that column out. We added it (with a `not_null` test) rather than letting the next model read `raw` directly, so that only staging touches `raw`.
+
+### First intermediate model: `int_recipe_ingredients` (2026-11-01)
+
+**Data facts found first.** In `raw.foodcom_prepared`, `ingredient_parts`, `quantities_raw`, `instructions` and `keywords` are all jsonb lists. The LLM answer's ingredient entries hold only `position` (0-based), `quantity`, `unit`; the names live in `ingredient_parts`. Extras carry their own `name` and can have `quantity: null` with `unit: "to_taste"`. `instructions` is a list of step strings, but `public.recipes.instructions` is `Text`, so the steps must be joined into one string before the upsert (not done in staging, which only passes data through). `quantities_raw` has text fractions like `½`, which is why we use the LLM's numeric `quantity`.
+
+**The model** (`dbt/models/intermediate/int_recipe_ingredients.sql`) returns one row per ingredient line: listed ingredients (name from `ingredient_parts`, quantity and unit from the answer, joined on position) plus extras (`is_extra = true`).
+
+```sql
+cross join lateral jsonb_array_elements_text(r.ingredient_parts)
+    with ordinality as n(name, idx)
+-- ordinality counts from 1, the LLM from 0, so position = idx - 1
+```
+
+`jsonb_array_elements_text` turns a jsonb list into rows; `with ordinality` numbers them; `cross join lateral` lets each recipe row feed its own list into the function. The off-by-one (Postgres 1-based, LLM 0-based) is fixed once, here, by `idx - 1`. `line_no` is a unique 0-based order per recipe (extras continue after the listed ones), which later gives the link-table rows a stable key. Names are passed through uncleaned; normalization is a separate decision. Intermediate models are views too (`dbt_project.yml`).
+
+**Separate schemas per layer.** `profiles.yml` sets one schema (`staging`) for every model, so the intermediate view would have landed next to the staging one. Adding `+schema: intermediate` to the folder alone gives `staging_intermediate`, because dbt's built-in `generate_schema_name` macro glues the custom name onto the target schema (so dev and prod can share a database without colliding). We override that macro in `dbt/macros/generate_schema_name.sql`: a model with a custom schema goes in exactly that schema, one without goes in the target schema. Checked from the parsed manifest: `stg_recipes -> staging`, `int_recipe_ingredients -> intermediate`. Tradeoff: with the override, two people running dbt against the same database write to the same schemas; fine for us (one dev database), but a per-person target schema would be needed if that changes.
+
+**`dbt build` result.** `stg_recipes` and `int_recipe_ingredients`: `PASS=15` (2 models, 3 source tests, 5 tests on `stg_recipes`, 5 on `int_recipe_ingredients`). The `unit` `not_null` test passed on the 20 pilot recipes, so the LLM returned a unit every time, including for "to taste" extras; the test stays as a guard for the full run. `line_no` exists to tell identical rows apart (the same ingredient listed twice, e.g. "salt" for batter and for topping) and to keep the author's order; it is not for matching old rows to new ones, because link tables are replaced per recipe.
+
+### Second intermediate model: `int_recipe_cuisines`
+
+`dbt/models/intermediate/int_recipe_cuisines.sql` unpacks the cuisine list into one row per `(source_ref, cuisine)`:
+
+```sql
+cross join lateral jsonb_array_elements_text(r.cuisines_json) as c(cuisine)
+```
+
+Same pattern as the ingredients model, simpler: a list of plain strings, so no join and no position. Names are passed through as written; matching them to `public.cuisines` ids happens at load time (the cuisine list is still being finalized, and a name that has no match should fail loudly there). Tests: `not_null` on both columns.
+
+**An empty list slips past `not_null`.** Paul asked whether `cuisines_json = []` is a problem. `not_null` on `cuisines_json` passes (an empty list is not `NULL`), and `not_null` on `cuisine` passes (no rows, so nothing to be null); the recipe silently disappears from `int_recipe_cuisines`. Missing key, empty list and an item with no value are three different cases and need different checks. `augment.py` requires 1 to `MAX_CUISINES` (2) cuisines with no duplicates (`validate_result`), but `load.py` only checks the key exists and is a list, so `raw` trusts `augment.py`. We added a singular test, `dbt/tests/recipe_cuisine_count.sql`: a query that returns recipes with fewer than 1, more than 2, or duplicate cuisines (left join from `stg_recipes` so recipes with none still show up); zero rows means pass. The `2` is hard-coded and must follow `MAX_CUISINES`.
+
+New concept entries in `docs/CONCEPTS.md` this session: unpacking a jsonb list into rows (lateral join, ordinality), singular test, dbt schema naming macro.
+
+**Build with all three models.** `dbt build`: `PASS=19` (3 models, 3 source tests, 5 on `stg_recipes`, 5 on `int_recipe_ingredients`, 2 on `int_recipe_cuisines`, 1 singular test `recipe_cuisine_count`), `ERROR=0`. Pipeline so far: `raw.foodcom_prepared` -> `staging.stg_recipes` -> `intermediate.int_recipe_ingredients` and `int_recipe_cuisines`. Still to do: the upsert into `public` (where it lives, creating `ingredients` from names, matching unit and cuisine names to ids).
+
+### Andrew's PR #18 changes land under our feet (2026-11-03)
+
+After the review, Andrew pushed three commits to `feat/foodcom-augment` (DECISIONS #26 amendment): `cuisines` (list, cap 2) became `cuisine` (one string; the parent is added in code from `CUISINE_PARENT`), `package` was removed from `UNITS`, and every record now carries `schema_version` (3 for the new rules; the 20 pilot rows we loaded are version 2). Effect on our stack: `load.py` requires a `cuisines` list, `stg_recipes` reads `answer -> 'cuisines'`, `int_recipe_cuisines` unpacks a list, and `recipe_cuisine_count` checks 1 to 2, so all four assume the old shape; the `units` seed in our applied migration still has `package`. `feat/dbt-staging` is 3 commits behind and needs a rebase. Open decision: support version 3 only (one shape to maintain, needs a small version-3 pilot for test data) or accept both shapes. This is the cost of building on an open PR: upstream changes to the data shape reach every stacked branch, which is why the schema version stamp exists.
+
+### Decision: finish the current shape first, fix the cuisine change after (2026-11-04)
+
+Paul chose to complete the dbt work on the version 2 shape (`cuisines` list) that this branch and the 20 pilot rows use, and handle Andrew's one-cuisine change (version 3) afterwards as one separate change. Checked first: there is no version 3 data anywhere in the repo (the committed pilot files are all version 2, there is no local `augment_results.jsonl`), so version 3 test data would need a small paid augment run or a file from Andrew. Tradeoff: some rework later (`load.py`, `stg_recipes`, `int_recipe_cuisines`, the cuisine count test, the stale `package` unit seed), in exchange for not blocking on a rebase and a paid run.
+
+### Ingredient names: `ingredient_name` and `int_ingredients`
+
+DECISIONS #27 says dbt does only simple name cleaning at first and real normalization is its own roadmap task. `int_recipe_ingredients` now keeps the raw `name` and adds `ingredient_name`:
+
+```sql
+regexp_replace(lower(trim(name)), '\s+', ' ', 'g') as ingredient_name
+```
+
+`lower` and `trim` fix case and edge spaces; the regex collapses runs of whitespace ("olive   oil" to "olive oil"). The raw name stays beside it so a bad merge can be traced. The new model `int_ingredients` is `select distinct ingredient_name` from it, one row per ingredient, which is what gets upserted into `public.ingredients` (unique on `ingredient_name`). The recipe link rows and the `ingredients` rows both use `ingredient_name`, so the join between them cannot disagree. What v1 does not do: plurals ("tomato" vs "tomatoes"), descriptors ("fresh basil" vs "basil"), spelling variants.
+
+**Build with four models.** `dbt build`: `PASS=23`, `ERROR=0` (4 models; tests: 3 source, 5 `stg_recipes`, 6 `int_recipe_ingredients`, 2 `int_recipe_cuisines`, 1 singular `recipe_cuisine_count`, 2 `int_ingredients`). Pipeline: `raw.foodcom_prepared` -> `staging.stg_recipes` -> `intermediate.int_recipe_ingredients`, `int_recipe_cuisines`, `int_ingredients`. Regex note: in `regexp_replace(text, '\s+', ' ', 'g')`, `\s+` matches a run of whitespace, `' '` is the replacement, and `'g'` replaces every run instead of only the first (`a___b___c` becomes `a_b_c` with it and `a_b___c` without; `_` marks a space).
+
+**What the v1 cleaning did on the pilot.** The 20 recipes have 192 ingredient lines (listed plus extras), 127 distinct names before cleaning and 127 after, so `lower`/`trim`/space-collapse merged nothing; `clean.py` already strips each list item and the source names are already lowercase. The real duplicates are the plural kind: Paul found `carrot` and `carrots` in `int_ingredients`. That is the first concrete test case for the roadmap task "Ingredient name normalization v1" (plurals, then descriptors like "fresh basil" vs "basil"). Why it matters: the pantry check and the substitution graph match on `ingredient_id`, so two rows for one food split the data and make "I have carrots" not satisfy "carrot".
+
+**Decision: normalization stays its own task.** Paul chose not to fix plurals inside the dbt cleaning. Reasons: the roadmap lists normalization as a separate task, DECISIONS #27 says dbt only does `lower(trim(...))` for now, and because every model reads `ingredient_name` from one place, a better normalization later is a change in one model plus a rerun of dbt (the point of ELT). Candidate approaches recorded for that task: simple singularizing (risk: `molasses`, `hummus`, `couscous`, `asparagus`), a lemmatizer library (new dependency, ask first), or one LLM pass mapping the distinct names to canonical names.
+
+### Tested: can a dbt macro roll back a transaction? (2026-11-04)
+
+Paul asked to test the claim "a `run-operation` macro could use explicit `begin`/`commit`, but needs testing". Method: a throwaway dbt project in `/tmp` (nothing added to the repo) with macros run by `dbt run-operation`, writing to a scratch schema `txn_test` in Supabase (dropped afterwards; checked that it was gone). Each case creates a table and inserts one row, then:
+
+| Case | What the macro does | Table afterwards |
+|---|---|---|
+| A | no `begin`, then raises an error | **exists, 1 row** (writes were NOT undone) |
+| B | no `begin`, no error | exists, 1 row |
+| C | explicit `begin`, then raises an error | gone (rolled back) |
+| D | explicit `begin` ... `commit`, no error | exists, 1 row |
+| E | explicit `begin`, a real SQL error in the middle | gone (rolled back) |
+
+Result: by default a macro does not roll back. Earlier statements are already saved when a later one fails (case A), so a half-finished publish could be left behind. With an explicit `begin`, an error does undo everything (C, E) and `commit` saves it (D), so the pattern works, but only if every macro remembers to start with `begin`. Forgetting it fails silently in the dangerous direction. Contrast: psycopg's `with conn.transaction():` (used in `load.py`) is all-or-nothing by default, so there is no way to forget. Caveat: one run on one dbt version (1.12.6, dbt-postgres 1.11.0), five small cases; it shows the behavior, not a guarantee for every statement type.
+
+### Where the upsert into `public` lives: comparison and recommendation (2026-11-04)
+
+Both options run the same `INSERT ... ON CONFLICT` SQL, so the difference is the wrapper: option 1 is a Python script (psycopg) that runs SQL files in one transaction; option 2 is a dbt `run-operation` macro. Paul's questions and what we found:
+
+| | Option 1: SQL + Python script | Option 2: dbt macro |
+|---|---|---|
+| Rollback | default: `with conn.transaction()` is all-or-nothing (used in `load.py`) | only with an explicit `begin`; forgetting it leaves a half-written `public` (tested) |
+| Table names | hardcoded schema names | `ref()` keeps them in sync |
+| Testing | pure-Python parts testable in the pytest CI already runs | Jinja logic only testable by running dbt |
+| New things to learn | none (same as `load.py`) | `run-operation`, macros that run statements |
+| Runs in `dbt build` | no | no (`run-operation` is outside the model graph) |
+
+Corrections along the way: I first said option 2 "is not safe". Paul pointed out that a correct macro, once written, behaves the same as the script. That is right; the accurate claim is that option 2 is safe if written correctly and needs more care to stay that way (code gets edited later, e.g. the version 3 cuisine change; the safety rests on dbt behaviour we confirmed on one version, not a documented guarantee; and `dbt test` does not cover a `run-operation`).
+
+CI facts checked (`.github/workflows/ci.yml`): one job, runs `ruff` and `pytest` with `--group pipelines`; no Postgres service, no `transforms` group (so dbt files are not checked at all), no secrets. Automatic tests of the real SQL (upsert, rollback) would need a Postgres service in CI, a new service to agree on. Cheap options: pure-function pytest tests (free), and a separate PR adding `dbt parse` to CI (needs `--group transforms`, ask first).
+
+Recommendation: option 1, because rollback is the default, more of it is testable, it matches `load.py`, and the macro's one advantage (`ref()`) is small with three views. Would change if the publish had to run on every dbt run or schema names changed often. Paul may still build option 2 as a labelled experiment in its own PR (SQL written once in `.sql` files so the two cannot drift).
+
+### Shipped: `publish.py`, the step that writes dbt's results into `public` (2026-11-04)
+
+Decision: option 1 (script), with option 2 (macro) to follow later as its own PR; recorded as an amendment to DECISIONS #27. Files: `pipelines/foodcom/publish.py`, SQL in `pipelines/foodcom/publish_sql/`, tests in `tests/pipelines/test_publish.py`.
+
+```mermaid
+flowchart LR
+    A["dbt build: staging + intermediate views, 23 checks"] --> B["publish.py, one transaction"]
+    B --> C["0. checks: every unit and cuisine name exists"]
+    C --> D["10 upsert ingredients"] --> E["20 upsert recipes on source_ref"]
+    E --> F["30/31 rewrite recipe_ingredient"] --> G["40/41 rewrite recipe_cuisine"]
+```
+
+```python
+with conn.transaction():
+    problems = format_problems(find_missing_names(conn))
+    if problems:
+        raise MissingNamesError(problems)       # before any write
+    for filename in STEPS:
+        counts.append((filename, conn.execute(read_sql(filename)).rowcount))
+    if dry_run:
+        raise psycopg.Rollback()                # undo everything, quietly
+```
+
+What it does: the block is the transaction, so any error rolls back every step. The checks come first and write nothing; a unit or cuisine with no match stops the run with the names listed (otherwise the join would silently drop rows). `--dry-run` runs all steps and rolls back so you can read the row counts.
+
+```sql
+insert into public.recipes (recipe_name, source_ref, instructions, total_minutes, servings)
+select r.name, r.source_ref, (select string_agg(s.step, E'\n' order by s.idx) ...), ...
+from staging.stg_recipes as r
+on conflict (source_ref) do update set recipe_name = excluded.recipe_name, ...
+```
+
+`on conflict (source_ref) do update` finds an existing Food.com recipe and updates it in place, so `recipe_id` never changes; rows with no `source_ref` (user-saved) cannot conflict. The instruction steps (a jsonb list) are joined into the text column here. Link tables are cleared and rewritten per recipe, limited to `source_ref in (select source_ref from staging.stg_recipes)`, so user-saved recipes are never touched and ingredients the LLM stopped returning disappear.
+
+**Verified on the real database, in a transaction rolled back at the end.** Real `--dry-run` stopped at the check: `cuisines` is empty, and the pilot uses 9 cuisine names (american, chinese, italian, japanese, middle_eastern, native_american, other, tex_mex, thai). To exercise the writes anyway, a throwaway script added those 9 names inside an outer transaction, ran `publish` twice, inspected, then rolled everything back. Run 1: 127 ingredients, 20 recipes, 192 ingredient lines, 21 cuisine links. Run 2: the same totals and the same `recipe_id`s (idempotent). Afterwards every `public` table was back to 0 rows. Recipe 71222 came out in order with its extras last and `to_taste` lines with null quantity. Tests: 8 new pytest tests without a database (every SQL file listed and non-empty, parents before children, each delete right before its insert, deletes limited to staging recipes, message formatting); not tested automatically: the SQL itself (needs Postgres in CI).
+
+New concepts: transaction and rollback (dry run), transform vs publish (`CONCEPTS.md`). Still open: cuisine seeds (Alembic revision after Andrew's list is final), version 3 shape, `dbt parse` in CI, the macro comparison PR.
+
+### Version 3 shape in the dbt models (PR #21, 2026-11-04)
+As planned in the 2026-11-04 decision above, the cuisine change now lands as one separate change, after #20 was fixed and rebased on #18 and #21 was rebased onto #20 (`git rebase --onto`, clean). In dbt:
+
+```sql
+-- dbt/models/staging/stg_recipes.sql
+schema_version,
+answer ->> 'cuisine' as cuisine,
+```
+
+`->>` returns text (the single cuisine string), where `->` returned jsonb (the old list). `schema_version` comes from the new column `load.py` stores. `int_recipe_cuisines` no longer unpacks a list: it selects `source_ref, cuisine`. `recipe_cuisine_count` now requires exactly 1 cuisine per recipe, and `stg_recipes` tests that `schema_version` is 3 and `cuisine` is not null.
+
+Checked: `dbt parse` passes. Not checked: `dbt build`, because `raw.foodcom_prepared` on Supabase still holds the 20 version-2 rows and has no `schema_version` column; it needs version-3 data first.
+
+**Parent cuisines (cantonese gives chinese).** The parent used to be in the model's list; in version 3 only `CUISINE_PARENT` in `augment.py` has it. We copied that map into a dbt seed (`dbt/seeds/cuisine_parent.csv`, 28 pairs, see [dbt seed](../docs/CONCEPTS.md#dbt-seed)) and `int_recipe_cuisines` adds the parent with a `union all` and a join:
+
+```sql
+select r.source_ref, p.parent as cuisine
+from {{ ref('stg_recipes') }} as r
+inner join {{ ref('cuisine_parent') }} as p on p.cuisine = r.cuisine
+```
+
+So a recipe has 1 row, or 2 when its cuisine has a parent, and `recipe_cuisine_count` checks 1 to 2 with no repeats. Two copies of the map now exist, so `test_dbt_cuisine_parent_seed_matches_cuisine_parent` fails if they drift. Checked: `dbt parse` and all 95 pytest tests pass. Not checked: `dbt seed` and `dbt build` on real data (see above).
