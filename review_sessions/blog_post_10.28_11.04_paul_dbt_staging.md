@@ -373,7 +373,8 @@ elif record.get("schema_version") not in KNOWN_SCHEMA_VERSIONS:
 
 The list is explicit, not imported from `augment.py`, so bumping the version in `augment.py` makes the loader skip everything (and print why) until someone updates the loader and dbt model on purpose.
 - **Wording fixed** in the migration docstring and in DECISIONS #27 and CONCEPTS ("1 or 2 cuisines", "changed twice", unit counts).
-- **Not done:** dropping `package` from the seeded `units` needs a new migration revision (the old one is applied to Supabase); it waits for the unit list meeting. The committed pilot file is version 2, so `load.py --pilot` now skips all 20 rows until we have version-3 pilot results.
+- **Package unit dropped** in a new revision, `c3a91e5d7f20` (the first one is already applied on Supabase, so it cannot be edited). Upgrade deletes the row; downgrade puts it back.
+- **Not done:** the committed pilot file is version 2, so `load.py --pilot` now skips all 20 rows until we have version-3 pilot results.
 - **Table change:** `raw.foodcom_prepared` gained a `schema_version` column, so the existing table on Supabase must be dropped by hand once before the next load (see `replace_table`).
 
 ## What we'd explain differently next time
