@@ -620,4 +620,12 @@ answer ->> 'cuisine' as cuisine,
 
 Checked: `dbt parse` passes. Not checked: `dbt build`, because `raw.foodcom_prepared` on Supabase still holds the 20 version-2 rows and has no `schema_version` column; it needs version-3 data first.
 
-Open: parent cuisines (cantonese gives chinese). They used to be in the model's list; now `CUISINE_PARENT` in `augment.py` is the only source, so `recipe_cuisine` would get only the child until we copy that table into dbt (a seed) or decide parents are not needed yet.
+**Parent cuisines (cantonese gives chinese).** The parent used to be in the model's list; in version 3 only `CUISINE_PARENT` in `augment.py` has it. We copied that map into a dbt seed (`dbt/seeds/cuisine_parent.csv`, 28 pairs, see [dbt seed](../docs/CONCEPTS.md#dbt-seed)) and `int_recipe_cuisines` adds the parent with a `union all` and a join:
+
+```sql
+select r.source_ref, p.parent as cuisine
+from {{ ref('stg_recipes') }} as r
+inner join {{ ref('cuisine_parent') }} as p on p.cuisine = r.cuisine
+```
+
+So a recipe has 1 row, or 2 when its cuisine has a parent, and `recipe_cuisine_count` checks 1 to 2 with no repeats. Two copies of the map now exist, so `test_dbt_cuisine_parent_seed_matches_cuisine_parent` fails if they drift. Checked: `dbt parse` and all 95 pytest tests pass. Not checked: `dbt seed` and `dbt build` on real data (see above).

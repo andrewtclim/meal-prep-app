@@ -208,3 +208,9 @@
 - **Where we use it:** `stg_recipes` in `dbt/models/staging/`; intermediate models come next. No `marts/` layer, since our final tables are the app tables in `public`.
 - **Why this over the alternative:** If a model reads `raw` directly, a change in `raw` has to be fixed in every model. With a staging layer it is fixed once. The tradeoff is an extra hop for small projects.
 - **Common question:** What goes in staging and what goes in intermediate? Staging renames and retypes; anything that changes meaning goes in intermediate.
+
+### dbt seed
+- **What it is:** A small CSV in `dbt/seeds/` that `dbt seed` loads as a table, so models can `ref()` it like any other model. Good for a short, rarely changing lookup that only dbt uses.
+- **Where we use it:** `dbt/seeds/cuisine_parent.csv` (cantonese -> chinese). `int_recipe_cuisines` joins it to add each recipe's parent cuisine. A test in `tests/pipelines/test_augment.py` fails if the CSV differs from `CUISINE_PARENT` in `augment.py`.
+- **Why this over the alternative:** Hardcoding the pairs in SQL hides them inside a model, and having the LLM return the parent costs tokens and can disagree with the table. A seed keeps the data visible and testable. The tradeoff is two copies of the map to keep in step, which is why the drift test exists.
+- **Common question:** Why is this a dbt seed when the units and cuisines lookups are Alembic seeds? Those tables belong to Alembic and the app; this mapping is only read by dbt.
