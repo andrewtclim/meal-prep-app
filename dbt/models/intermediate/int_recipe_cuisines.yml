@@ -3,7 +3,7 @@ version: 2
 models:
   - name: int_recipe_cuisines
     description: >
-      One row per (recipe, cuisine) from the LLM answer. Becomes the rows of
+      One row per (recipe, cuisine) from the LLM answer: one row per recipe in schema version 3 (parent cuisines are not added yet). Becomes the rows of
       public.recipe_cuisine once cuisine names are matched to cuisine ids.
     columns:
       - name: source_ref

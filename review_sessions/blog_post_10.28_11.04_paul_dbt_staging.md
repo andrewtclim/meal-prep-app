@@ -606,3 +606,18 @@ on conflict (source_ref) do update set recipe_name = excluded.recipe_name, ...
 **Verified on the real database, in a transaction rolled back at the end.** Real `--dry-run` stopped at the check: `cuisines` is empty, and the pilot uses 9 cuisine names (american, chinese, italian, japanese, middle_eastern, native_american, other, tex_mex, thai). To exercise the writes anyway, a throwaway script added those 9 names inside an outer transaction, ran `publish` twice, inspected, then rolled everything back. Run 1: 127 ingredients, 20 recipes, 192 ingredient lines, 21 cuisine links. Run 2: the same totals and the same `recipe_id`s (idempotent). Afterwards every `public` table was back to 0 rows. Recipe 71222 came out in order with its extras last and `to_taste` lines with null quantity. Tests: 8 new pytest tests without a database (every SQL file listed and non-empty, parents before children, each delete right before its insert, deletes limited to staging recipes, message formatting); not tested automatically: the SQL itself (needs Postgres in CI).
 
 New concepts: transaction and rollback (dry run), transform vs publish (`CONCEPTS.md`). Still open: cuisine seeds (Alembic revision after Andrew's list is final), version 3 shape, `dbt parse` in CI, the macro comparison PR.
+
+### Version 3 shape in the dbt models (PR #21, 2026-11-04)
+As planned in the 2026-11-04 decision above, the cuisine change now lands as one separate change, after #20 was fixed and rebased on #18 and #21 was rebased onto #20 (`git rebase --onto`, clean). In dbt:
+
+```sql
+-- dbt/models/staging/stg_recipes.sql
+schema_version,
+answer ->> 'cuisine' as cuisine,
+```
+
+`->>` returns text (the single cuisine string), where `->` returned jsonb (the old list). `schema_version` comes from the new column `load.py` stores. `int_recipe_cuisines` no longer unpacks a list: it selects `source_ref, cuisine`. `recipe_cuisine_count` now requires exactly 1 cuisine per recipe, and `stg_recipes` tests that `schema_version` is 3 and `cuisine` is not null.
+
+Checked: `dbt parse` passes. Not checked: `dbt build`, because `raw.foodcom_prepared` on Supabase still holds the 20 version-2 rows and has no `schema_version` column; it needs version-3 data first.
+
+Open: parent cuisines (cantonese gives chinese). They used to be in the model's list; now `CUISINE_PARENT` in `augment.py` is the only source, so `recipe_cuisine` would get only the child until we copy that table into dbt (a seed) or decide parents are not needed yet.
