@@ -9,7 +9,7 @@ Paul fixed the schema drift I found in his stage 3 PRs, so I reviewed his dbt mo
 | [#20](https://github.com/andrewtclim/meal-prep-app/pull/20) | Paul's: `raw` schema migration, `load.py`, DECISIONS #27. He applied the six fixes from my review | Open |
 | [#21](https://github.com/andrewtclim/meal-prep-app/pull/21) | Paul's: dbt project, staging and intermediate models. I approved it with one test suggestion and two nits | Open, approved |
 | [#22](https://github.com/andrewtclim/meal-prep-app/pull/22) | Paul's: `publish.py`, the upsert into `public`. Not reviewed yet | Open |
-| This PR | The version-3 pilot results for the 20 recipes, the v2 files renamed, a README section | Open (link added after it opens) |
+| [#23](https://github.com/andrewtclim/meal-prep-app/pull/23) | The version-3 pilot results for the 20 recipes, the v2 file renamed, a README section | Open |
 
 ## Session: 2026-11-04
 ### What we worked on and why
