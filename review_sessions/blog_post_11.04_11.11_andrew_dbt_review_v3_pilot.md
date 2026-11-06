@@ -60,13 +60,13 @@ flowchart LR
 | Valid answers | 20 of 20, no retries, cost $0.0146 |
 | Records | all `schema_version` 3, one `cuisine` string each |
 | Paul's loader | `load.py --dry-run` on the new file: 20 usable results, 20 rows, database not touched |
-| Ingredients vs version 2 | 34 of 170 entries differ in unit or quantity (20%), below the roughly one-third between identical runs |
+| Ingredients vs version 2 | both are thinking mode on the same 20 recipes, only the rules changed; 34 of 170 entries differ in unit or quantity (20%), within the roughly one-third that two identical runs differ by (from an earlier 5-recipe test) |
 | Cuisine vs version 2 | the first cuisine changed on 4 of 20 recipes |
 
-Two of the four cuisine changes look like misses of our own rules: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. It is 20 recipes with one run each, so it may be noise. Fixing it means a prompt change and so a new `SCHEMA_VERSION`; that goes to the team meeting, not into this PR.
+The new cuisines are reasonable and not blocking; a real miss would be something like labeling sushi as italian. Two are worth a mention: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. It is 20 recipes with one run each, so it may be noise. A prompt change would mean a new `SCHEMA_VERSION`, so it is only noted for the team meeting.
 
 ### Decisions and concepts
-- No new DECISIONS entry. Open for the meeting: the unit list (`can`, `bunch`, `pinch`, `dash`, `piece`), whether to filter on rating, the cuisine misses, and how the final upsert into `public` runs (Paul's #22 proposes one).
+- No new DECISIONS entry. Open for the meeting: the unit list (`can`, `bunch`, `pinch`, `dash`, `piece`), whether to filter on rating, the two small cuisine differences, and how the final upsert into `public` runs (Paul's #22 proposes one).
 - CONCEPTS: [Schema drift (and version stamps)](../docs/CONCEPTS.md#schema-drift-and-version-stamps)
 
 ## What we'd explain differently next time

@@ -148,12 +148,12 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 After the PR #18 review changes (one cuisine, `package` removed, `schema_version` 3) we reran the same 20 recipes in thinking mode so the stage 3 loader and dbt models have version-3 data to test against: `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --compare thinking`, writing a fresh `pilot/results_thinking.jsonl` (the v2 thinking file was renamed first).
 - 20 of 20 valid on the first try, no retries. Cost $0.0146 (about $0.00073 per recipe, close to version 2). Every record has `schema_version` 3 and one `cuisine` string.
 - Paul's `load.py --dry-run` (PR #20) reads all 20 records and builds 20 rows.
-- Against the version-2 thinking answers for the same recipes, 34 of 170 ingredient entries differ in unit or quantity (20%), below the roughly one-third that two identical runs differ by, so it reads as run-to-run noise and not a shift.
-- The first cuisine changed on 4 of 20 recipes, and two look like misses of our own rules: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. This is 20 recipes, one run each, so it may be noise. It is not fixed here, because a prompt change means a new `SCHEMA_VERSION`; it goes to the team meeting.
+- Both runs are thinking mode (same model, same 20 recipes); only the rules changed between them. 34 of 170 ingredient entries differ in unit or quantity (20%). Two identical thinking runs differed on about a third of entries in an earlier 5-recipe test, so 20% is within run-to-run noise and shows no clear shift from the new rules.
+- The first cuisine changed on 4 of 20 recipes and the new answers are reasonable, not blocking. Two are worth a mention: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. It is 20 recipes, one run each, so it may be noise. A prompt change would mean a new `SCHEMA_VERSION`, so it is only noted for the team meeting.
 
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
-- The mode to use is decided (thinking, 2026-11-02). Still open: whether the cuisine misses above are noise or a prompt problem.
+- The mode to use is decided (thinking, 2026-11-02). Still open (low priority): whether the two small cuisine differences above are worth a prompt change.
 - Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
