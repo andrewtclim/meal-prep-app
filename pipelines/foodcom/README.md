@@ -5,8 +5,8 @@ Turns the raw Food.com recipes file into a clean set we can load. Three stages. 
 | Stage | Script | Status |
 |---|---|---|
 | 1. Clean and filter | `clean.py` | Done |
-| 2. Add units and cuisines with an LLM | `augment.py` | In progress: code and a 3-recipe test done, pilot of 200 next |
-| 3. Load into Postgres with dbt | `load.py` and `dbt/` | Later |
+| 2. Add units and cuisines with an LLM | `augment.py` | Code done (merged), 200-recipe pilot and two 20-recipe pilots run, thinking chosen; the full run waits for the budget talk |
+| 3. Load into Postgres with dbt | `load.py` and `dbt/` | In review (PRs #20, #21, #22) |
 
 ## Stage 1: clean
 
@@ -127,10 +127,10 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - The model tagged `american` on 156 of 200 recipes, often as a second cuisine. This may be a filler tag and needs a look.
 
 ### Thinking vs no thinking: 20 recipes (2026-10-30)
-**Decision (2026-11-02): use thinking.** Paul picked thinking from his notebook review (no-thinking was wrong by a large amount on Salmon Basil Rolls, Lemon Cucumbers and Fava Beans), and Andrew agrees. The comparison files are version-2 results, kept as the evidence behind that decision, and `--compare` under a newer version would append to them. Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
+**Decision (2026-11-02): use thinking.** Paul picked thinking from his notebook review (no-thinking was wrong by a large amount on Salmon Basil Rolls, Lemon Cucumbers and Fava Beans), and Andrew agrees. The two files this comparison was judged on are version-2 results, kept as the evidence behind that decision: `results_thinking_v2.jsonl` and `results_nothinking.jsonl`. (Running `--compare` under a newer version appends to the file for that mode, so the thinking file was renamed first; see the version-3 run below.) Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
 
 - **Sample:** 20 recipes, stratified by how raw quantities compare with ingredient names: 7 `equal`, 10 `more`, 3 `fewer` (fixed seed 2026, chosen so none were recipes we looked at while writing the prompt). Both modes got the same 20; only the `thinking` setting differs (`effort` low in both).
-- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl`, `results_nothinking.jsonl`, plus the notebook and `review.csv`.
+- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl` (now the version-3 run) and `results_thinking_v2.jsonl` (the v2 evidence), `results_nothinking.jsonl` (v2), plus the notebook and `review.csv`.
 
 | | Thinking | No thinking |
 |---|---|---|
@@ -144,9 +144,16 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - The base cost rose from the earlier $108 direct / $54 batch estimate to about $160 / $80 with thinking: the 90-cuisine list and the extras rules add about 677 input tokens per call, and the answers are longer.
 - One recipe (Cheesy Scalloped Corn Bake) shows a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps say "mix all ingredients", so neither mode can recover it or know the amounts. We have not decided whether to flag such recipes as possibly incomplete.
 
+### Version-3 run of the same 20 recipes (2026-11-05)
+After the PR #18 review changes (one cuisine, `package` removed, `schema_version` 3) we reran the same 20 recipes in thinking mode so the stage 3 loader and dbt models have version-3 data to test against: `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --compare thinking`, writing a fresh `pilot/results_thinking.jsonl` (the v2 thinking file was renamed first).
+- 20 of 20 valid on the first try, no retries. Cost $0.0146 (about $0.00073 per recipe, close to version 2). Every record has `schema_version` 3 and one `cuisine` string.
+- Paul's `load.py --dry-run` (PR #20) reads all 20 records and builds 20 rows.
+- Against the version-2 thinking answers for the same recipes, 34 of 170 ingredient entries differ in unit or quantity (20%), below the roughly one-third that two identical runs differ by, so it reads as run-to-run noise and not a shift.
+- The first cuisine changed on 4 of 20 recipes, and two look like misses of our own rules: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. This is 20 recipes, one run each, so it may be noise. It is not fixed here, because a prompt change means a new `SCHEMA_VERSION`; it goes to the team meeting.
+
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
-- Which mode to use: the cost side is measured (above); the accuracy side waits on our two reviews of the 20-recipe notebook.
+- The mode to use is decided (thinking, 2026-11-02). Still open: whether the cuisine misses above are noise or a prompt problem.
 - Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
