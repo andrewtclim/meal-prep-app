@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  # `name` is a label we choose; models write source('foodcom', '<table>').
+  # `schema` is the real Postgres schema the tables live in (created by Alembic).
+  - name: foodcom
+    schema: raw
+    tables:
+      - name: foodcom_prepared
+        description: >
+          One row per Food.com recipe: cleaned recipe fields plus the LLM
+          answer (ingredients, extras, one cuisine) as jsonb. Written by
+          pipelines/foodcom/load.py, replaced on every load.
+        columns:
+          - name: source_ref
+            description: Food.com's own recipe id. Unique per recipe.
+            data_tests:
+              - unique
+              - not_null
+          - name: schema_version
+            description: Answer shape version, stamped by augment.py and kept by load.py.
+            data_tests:
+              - not_null
+          - name: answer
+            description: The model's answer as jsonb.
+            data_tests:
+              - not_null
