@@ -21,6 +21,10 @@ pipelines = [
     "pandas>=3.1.0",
     "pyarrow>=26.0.0",
 ]
+transforms = [
+    "dbt-core>=1.12.6",
+    "dbt-postgres>=1.11.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

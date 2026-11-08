@@ -119,7 +119,7 @@
 
 
 ### Structured outputs and closed vocabularies
-- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 19 units. The guarantee is on the shape of the answer, not on whether the values are correct.
+- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 18 units. The guarantee is on the shape of the answer, not on whether the values are correct.
 - **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
 - **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
 - **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
@@ -166,3 +166,33 @@
 - **Where we use it:** `estimate_cost` and `print_report` in `pipelines/foodcom/augment.py` project the cost of the full run from measured tokens per recipe. The Batches API is planned for the full run, not built yet.
 - **Why this over the alternative:** Estimating cost from the text length alone was off by about 2 times in our 3-recipe test (about 1,570 input and 700 output tokens per recipe, against our guess of 800 and 350). The cause was thinking tokens: a raw response reported 589 thinking tokens out of 910 output tokens, and across the 200-recipe pilot about 80% of output was not the answer. Measuring on a pilot before a large run avoids a surprise bill.
 - **Common question:** How do you estimate and control the cost of an LLM pipeline? Measure real tokens per item on a small sample, project to the full size, and use batching for work that is not interactive.
+
+### Seed (lookup) data in a migration
+- **What it is:** A small table of allowed values that other tables point to by id, such as `units` and `cuisines`. "Seeding" means inserting those rows when the table is built, so the table comes with its labels. A foreign key from `recipe_cuisine` to `cuisines` rejects any cuisine that is not a row.
+- **Where we use it:** `UNITS` and the `bulk_insert` in `alembic/versions/bd4767ab853b_*.py`. The list is copied into the migration, not imported from `pipelines/foodcom/augment.py`.
+- **Why this over the alternative:** dbt seeds also load small tables, but they are meant for tables dbt owns, and these belong to Alembic, so two tools would touch one table. Importing the list would let a later edit to `augment.py` change what an old migration does on a fresh database. The tradeoff is two lists to keep in step; a test comparing them is a good follow-up. Once a revision is applied it is frozen, so a list that is still changing (cuisines) is seeded in a later revision.
+- **Common question:** Where do reference data live, in code or in the database? In the database as rows, versioned by the migration that creates them.
+
+### Identity column
+- **What it is:** A column Postgres numbers itself with an internal counter (`sa.Identity()`), used for primary keys such as `unit_id`. The counter only advances when Postgres assigns a value.
+- **Where we use it:** every primary key in `alembic/versions/2beee51a1f35_create_core_recipe_tables.py`. In `bd4767ab853b` the seed rows pass no ids.
+- **Why this over the alternative:** Hand-picking ids (1 to 19) leaves the counter at 1, so the next insert tries id 1 and collides. Letting Postgres assign them keeps the counter right.
+- **Common question:** Why not insert your own ids? The counter does not know about them.
+
+### jsonb
+- **What it is:** A Postgres column type that stores a JSON document in a binary form you can query and index. `answer->>'cuisine'` reads one field out of it in SQL.
+- **Where we use it:** the list columns and the model's whole answer in `raw.foodcom_prepared` (`pipelines/foodcom/load.py`).
+- **Why this over the alternative:** Flattened columns would break the load each time the model's output shape changes (it has changed between schema versions 1, 2 and 3). `jsonb` keeps the data whole and leaves the unpacking to dbt. The tradeoff is that a wrong field name only shows up when dbt runs, and the database does not check the inside of the document.
+- **Common question:** When do you use jsonb and when real columns? Real columns for data you filter, join and constrain every day; `jsonb` for landing data whose shape may change.
+
+### Full replace vs upsert
+- **What it is:** Two ways to reload a table. A full replace empties it and bulk-loads everything in one transaction (`TRUNCATE` then `COPY`). An upsert (`INSERT ... ON CONFLICT DO UPDATE`) checks each row against a unique key and inserts or updates it. Both are idempotent.
+- **Where we use it:** full replace in `replace_table` in `pipelines/foodcom/load.py` for `raw.foodcom_prepared`. The final write into `public` will be an upsert (DECISIONS #27).
+- **Why this over the alternative:** For a full reload the replace is usually faster and leaves no dead rows (updated rows leave dead copies until vacuum, which matters on the 500 MB tier), and it removes rows that vanished from the source. An upsert is needed for tables other tables reference, because a replace would reassign ids and break those links. The tradeoff of a replace is a brief lock and that the table's shape cannot change without dropping it.
+- **Common question:** Is an upsert cheaper than a full reload? Only if it can skip unchanged rows; a plain `DO UPDATE` rewrites them.
+
+### Git rebase vs merge
+- **What it is:** A rebase replays your commits on top of a newer base, so history is one straight line and the commits get new ids. A merge keeps history as it happened and adds a merge commit. Never rebase commits others already have, because it rewrites their ids and needs a force push.
+- **Where we use it:** `feat/dbt-staging` was rebased onto `feat/foodcom-augment` (PR #18) so a reviewer sees only our work; it will be rebased again when #17 and #18 merge into `main`.
+- **Why this over the alternative:** A merge is safer and leaves old commits alone but makes the history noisier. `git rebase --abort` undoes a rebase that goes wrong; if `uv.lock` conflicts, rerun `uv lock` instead of merging it by hand.
+- **Common question:** Rebase or merge? Rebase your own unpushed work for a clean line; merge anything shared.
