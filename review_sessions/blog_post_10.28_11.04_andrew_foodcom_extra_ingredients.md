@@ -1,13 +1,15 @@
 # Week of 10.28 to 11.04: Fixing the incomplete ingredient list in the Food.com augment step (Andrew)
 
 ## Summary
-After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. We then ran a 20-recipe comparison of thinking on and off, built a notebook to review it, and fixed a result-key bug Paul found in review (PR #18). Paul reviewed it (changes requested) and chose thinking; we then fixed the three things he asked for.
+After the 200-recipe pilot we checked an assumption we had never tested: that each recipe's `ingredient_parts` list is complete. It is not, so the stage 2 model now also returns `extra_ingredients` for items the steps use that the list lacks. We also widened the cuisine list from 20 to 90 and cut the cap to 2 per recipe. We then ran a 20-recipe comparison of thinking on and off, built a notebook to review it, and fixed a result-key bug Paul found in review (PR #18). Paul reviewed it (changes requested) and chose thinking; we then fixed the three things he asked for. On 11-03 I reviewed Paul's two dbt PRs and found they still expected the old answer shape.
 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
 | [#17](https://github.com/andrewtclim/meal-prep-app/pull/17) | `clean.py`, tests, DECISIONS #23 to #25, concepts | Merged (merge commit) |
-| [#18](https://github.com/andrewtclim/meal-prep-app/pull/18) | `augment.py`, tests, DECISIONS #26, concepts, `.env.example`; now also `extra_ingredients` | Draft, base retargeted to `main` |
+| [#18](https://github.com/andrewtclim/meal-prep-app/pull/18) | `augment.py`, tests, DECISIONS #26, concepts, `.env.example`; now also `extra_ingredients` | Merged |
+| [#20](https://github.com/andrewtclim/meal-prep-app/pull/20) | Paul's: `raw` schema migration, `load.py`, DECISIONS #27. I reviewed it and posted the drift findings | Open |
+| [#21](https://github.com/andrewtclim/meal-prep-app/pull/21) | Paul's: dbt project and staging model, stacked on #20 | Open |
 
 ## Session: 2026-10-29
 ### What we worked on and why
@@ -134,6 +136,50 @@ SCHEMA_VERSION = 3
 return {r["source_ref"] for r in records if r["status"] == "ok" and r.get("schema_version") == SCHEMA_VERSION}
 ```
 The resume check asks not only "is this recipe saved?" but "was it saved under the current rules?", so changing the prompt or validator cannot leave stale answers mixed into the final data. A real 3-recipe check on version 3 ($0.0022) gave `lb` for the lasagna cheeses and `1 tbsp` for the lemon juice. Three recipes, one run each, so not proof. Still open: the backup of the results file, and recipes whose main ingredient appears only in the title (the corn bake).
+
+## Session: 2026-11-03
+### What we worked on and why
+Paul opened two PRs for stage 3 (loading into Postgres and transforming with dbt) while I was changing stage 2 in PR #18. I reviewed them and went through the dbt files block by block, since I had not used dbt before.
+
+### Diagram
+The whole path, from the Kaggle file to the agent. Alembic builds the empty tables but is not a step in the flow.
+
+```mermaid
+flowchart TD
+  A["Kaggle recipes.parquet (local file)"] --> B["clean.py (Python)"]
+  B --> C["augment.py (Python + Haiku): quantity, unit, extras, cuisine"]
+  C --> D["load.py (Python): TRUNCATE + COPY"]
+  D --> E["raw.foodcom_prepared"]
+  E --> F["dbt: staging.stg_recipes and later models"]
+  F --> G["upsert into public tables (tool not decided)"]
+  G --> H["LangGraph agent reads public"]
+```
+
+### What I learned about dbt
+| Idea | The short version |
+|---|---|
+| A dbt model | One `.sql` file holding one `select`. dbt wraps it in `create view` or `create table` and sends it to Postgres |
+| `view` vs `table` | A view is a saved `select` with no stored rows; a table is a stored copy that goes stale until the next `dbt run` |
+| `source()` | Tells dbt about a table it did not build (`raw.foodcom_prepared`, made by `load.py`), which gives lineage and lets us test the raw data |
+| `->` vs `->>` | `->` returns jsonb, `->>` returns text. The lists stay jsonb in staging so the next model can turn them into rows |
+| dbt tests | Run on the real data, unlike pytest. `not_null` passes on `[]`, so they check shape, not correctness |
+| Who builds vs who fills | Alembic builds the `public` tables; dbt creates new views and tables from selects and does not insert into existing ones. That is why the last step into `public` is an upsert (other tables point at `recipe_id`) and Paul is still deciding how it runs |
+
+### The finding: schema drift
+After the PR #18 review the answer carries one `cuisine` string and every record has a `schema_version`. Paul's branches still expected the old shape, so I tested his own validator on both:
+
+| Where | Problem | Evidence |
+|---|---|---|
+| `load.py` line 35 | requires `cuisines`, so every version-3 record fails with `missing key 'cuisines'` | a version-3 results file gave 0 usable rows (it stops safely with "nothing to load") |
+| `stg_recipes.sql` line 12 | `answer -> 'cuisines'` is null for version 3, so the `cuisines_json not_null` test would fail | read from the SQL, I did not run dbt |
+| `load.py` | ignores `schema_version`, so a stale record could load as current | the filter only checks `status` |
+| the migration | seeds `package`, which we removed (applied to Supabase, so it needs a new revision) | unit lists differ by one |
+
+I posted this on #20 as a table of six small fixes. Paul applied them on 11-05.
+
+### Decisions and concepts
+- No new DECISIONS entry. Paul's DECISIONS #27 covers stage 3.
+- CONCEPTS: [Schema drift (and version stamps)](../docs/CONCEPTS.md#schema-drift-and-version-stamps)
 
 ## What we'd explain differently next time
 I wrote "the ingredient list is the anchor" as a design assumption while already holding the stage 1 number that only 22% of lists match the quantities, and did not ask what the extras were. The check cost nothing and took minutes. The habit to keep: when a join key looks tidy, compare it with a second signal on a sample before building on it.
