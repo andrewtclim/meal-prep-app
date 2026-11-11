@@ -220,3 +220,57 @@
 - **Where we use it:** `dbt/seeds/cuisine_parent.csv` (cantonese -> chinese). `int_recipe_cuisines` joins it to add each recipe's parent cuisine. A test in `tests/pipelines/test_augment.py` fails if the CSV differs from `CUISINE_PARENT` in `augment.py`.
 - **Why this over the alternative:** Hardcoding the pairs in SQL hides them inside a model, and having the LLM return the parent costs tokens and can disagree with the table. A seed keeps the data visible and testable. The tradeoff is two copies of the map to keep in step, which is why the drift test exists.
 - **Common question:** Why is this a dbt seed when the units and cuisines lookups are Alembic seeds? Those tables belong to Alembic and the app; this mapping is only read by dbt.
+
+### Cypher
+- **What it is:** Neo4j's query language. You draw the pattern you want with ASCII art: `(i:Ingredient)-[u:USED_IN]->(r:Recipe)` is an ingredient node, a `USED_IN` edge, and a recipe node. Round brackets are nodes, square brackets are relationships, and `{key: value}` matches properties.
+- **Where we use it:** `graphdb/schema.cypher`, and the query strings in `graphdb/queries.py` and `graphdb/seed_toy.py`.
+- **Why this over the alternative:** SQL can store edges in a table, but every extra hop is another self-join. In Cypher the path is the query (DECISIONS #3, CLAUDE.md).
+- **Common question:** What is the difference between a node, a label and a relationship? A node is a thing, its label is its type (`Ingredient`), and a relationship is a typed, directed link between two nodes.
+
+### MERGE vs CREATE
+- **What it is:** `CREATE` always makes a new node or edge. `MERGE` finds one that matches and only creates it if none exists. We `MERGE` on the unique key (`ingredient_id`) and then `SET` the other properties, so rerunning a load changes nothing. For edges we `MERGE` the endpoints only and `SET` properties after, otherwise a changed quantity would create a second edge.
+- **Where we use it:** `SEED_QUERIES` in `graphdb/seed_toy.py`.
+- **Why this over the alternative:** `CREATE` would double the graph on every rerun, and cleaning that up by hand is slow. This is the same idea as `ON CONFLICT` in Paul's `publish.py` (see "Deterministic vs idempotent pipelines").
+- **Common question:** Why is a rerun safe? The unique key makes `MERGE` find the existing node instead of creating a second one.
+
+### Constraint and index (Neo4j)
+- **What it is:** A uniqueness constraint tells Neo4j that no two nodes of a label can share a property value, and it also builds an index on that property. An index is a lookup structure, so finding one node does not scan every node. Neo4j Community supports uniqueness constraints but not "property must exist"; those need Enterprise.
+- **Where we use it:** `graphdb/schema.cypher` (three id constraints and an `Ingredient.name` index), applied by `graphdb/schema.py`. Required properties are checked by `validate_toy_data` in `graphdb/seed_toy.py` instead.
+- **Why this over the alternative:** Without constraints a buggy load can quietly create two onion nodes. The `PROFILE` plan shows `NodeUniqueIndexSeek`, the index being used.
+- **Common question:** How do you keep a graph from getting duplicate nodes? A uniqueness constraint, plus `MERGE` on that key.
+
+### Driver, session, transaction, connection pool
+- **What it is:** The driver is Neo4j's Python library; it speaks Bolt (port 7687), holds a pool of open connections, and is built once. A session is a short-lived handle that borrows a connection. A transaction is one all-or-nothing unit of work. `execute_read` and `execute_write` hand the driver a function and rerun it if a transient error hits, so it should only touch the database.
+- **Where we use it:** `graphdb/client.py` (`get_driver` is cached with `lru_cache`, `health_check`), and every `execute_read` or `execute_write` call in `graphdb/`.
+- **Why this over the alternative:** Opening a connection per query repeats the slow connect and login. Using `session.run` directly would leave retries to us. The default pool allows 100 connections and waits up to 60 seconds for a free one.
+- **Common question:** Why not open a new connection per request? Connecting and logging in is the slow part; a pool reuses connections that are already open.
+
+### Parameterized queries
+- **What it is:** Writing `$ingredient_id` in the query and passing the value separately, instead of building the text with an f-string. The value is data and can never be read as Cypher. Neo4j also caches the query plan once and reuses it for any values.
+- **Where we use it:** every query in `graphdb/queries.py` and `graphdb/seed_toy.py`.
+- **Why this over the alternative:** String formatting allows injection and makes a new plan for every value.
+- **Common question:** How do you prevent injection in a database query? Parameters, never string formatting.
+
+### Graph traversal vs SQL self-joins
+- **What it is:** To find "substitutes of substitutes" in SQL you join the edge table to itself once per hop. Cypher writes the hop count in the pattern: `-[:SUBSTITUTES_FOR*1..3]->`. One hop in SQL is fine and fast with an index; the graph pays off when questions span several hops.
+- **Where we use it:** `find_substitutes`, `recipes_makeable_from` and `shared_prep_tasks` in `graphdb/queries.py` (one hop each today).
+- **Why this over the alternative:** A recursive SQL query can do variable depth but is harder to read, and cycles have to be guarded by hand.
+- **Common question:** When would you pick a graph database over Postgres? When the questions are about paths and connections more than about rows and aggregates.
+
+### Directional edges
+- **What it is:** A relationship with a direction and its own properties each way. `(shallot)-[:SUBSTITUTES_FOR {weight: 0.85}]->(onion)` means shallot can replace onion; the reverse is a separate edge with its own weight. Cosine similarity is symmetric, so both start equal and later feedback can pull them apart.
+- **Where we use it:** `graphdb/toy/substitutions.csv` and `find_substitutes` in `graphdb/queries.py` (DECISIONS #28, Proposed).
+- **Why this over the alternative:** One undirected edge is half the data, but splitting it later means rewriting the data and every query.
+- **Common question:** Is "A can replace B" the same as "B can replace A"? Not always, which is why we store them separately.
+
+### Docker Compose and volumes
+- **What it is:** Compose starts containers from a YAML file. A named volume is storage managed by Docker outside the container, so `docker compose down` removes the container but keeps the data, and `down -v` deletes the volume too.
+- **Where we use it:** `docker-compose.yml` runs Neo4j `5.26.32-community`; the password comes from `.env`.
+- **Why this over the alternative:** A pinned image gives Paul and CI the same database. AuraDB (hosted Neo4j) replaces it for the deployed app by changing `NEO4J_URI`.
+- **Common question:** Why does the data survive `down` but not `down -v`? The volume lives outside the container; only `-v` deletes it.
+
+### pytest markers (skipping tests that need a service)
+- **What it is:** A marker tags a test (`@pytest.mark.neo4j`), and a hook in `conftest.py` skips tagged tests when `NEO4J_URI` is not set. The marker is registered in `pyproject.toml`.
+- **Where we use it:** `tests/graphdb/conftest.py` and the integration tests in `tests/graphdb/`.
+- **Why this over the alternative:** Without it, CI fails whenever no database is running. To run them in CI we would add a Neo4j service container with the same image tag; not done yet.
+- **Common question:** How do you test code that needs a database in CI? Unit-test the pure logic everywhere, and mark the integration tests so they run only where a database exists.

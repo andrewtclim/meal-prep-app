@@ -48,7 +48,7 @@
 
 | Week | Phase | Goal | Tags |
 |---|---|---|---|
-| 3 | Data | Neo4j graph build, seed `SUBSTITUTES_FOR`, prep task extraction, recipe embeddings in pgvector | must (prep extraction may spill into week 4) |
+| 3 | Data | Neo4j graph build, seed `SUBSTITUTES_FOR`, prep task extraction, recipe embeddings in pgvector | must (prep extraction may spill into week 4). Toy graph, schema and query functions done (`graphdb/`); graph sync from `public` and real weights still to do |
 | 4 | Data | USDA nutrient load, FDA recalls pipeline (scheduled, incremental), Terraform resources for infra (scaffold done in week 1) | must: USDA. should: recalls. should: Terraform (can slip to week 10) |
 | 5 | ML | Ingredient embeddings, ~100 hand-labeled substitution pairs, baseline comparison | must |
 | 6 | ML | Write scores to Neo4j edges, expiry prioritization incl. prepped foods | must |
@@ -73,3 +73,4 @@ _One line per change: date, what changed, why. Link a DECISIONS entry if one was
 - 2026-10-17: Switched Python dependencies from the proposed conda env (PR #7) and pinned requirements to uv with a lockfile (DECISIONS #22).
 - 2026-10-25: Recipe load changed to clean, then LLM augment, then dbt and upsert; the untouched source file stays local; subset set to 212,846 recipes (DECISIONS #23 to #25).
 - 2026-10-31: Stage 3 split by tool: Alembic builds the tables, `load.py` replaces `raw.foodcom_prepared`, dbt transforms, the final write into `public` is an upsert; cuisine seeds wait for the final list (DECISIONS #27).
+- 2026-11-10: Neo4j toy graph and query functions built early, on hand-made data, ahead of the real graph sync (DECISIONS #28, Proposed).

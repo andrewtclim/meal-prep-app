@@ -37,7 +37,7 @@
 | Label | Key property | Mirrors |
 |---|---|---|
 | `Ingredient` | `ingredient_id` | `ingredients` |
-| `Recipe` | `recipe_id` | `recipes` |
+| `Recipe` | `recipe_id` | `recipes`. Also carries `source_ref` (the Food.com id, null for user recipes) |
 | `PrepTask` | `prep_task_id` | `prep_tasks` (ingredient + technique + form) |
 | `StoreCategory` | `name` (e.g. asian_grocery) | Small curated list |
 
@@ -45,8 +45,8 @@
 
 | Relationship | Meaning | Properties |
 |---|---|---|
-| `(Ingredient)-[:USED_IN]->(Recipe)` | Recipe calls for this ingredient | quantity, unit |
-| `(Ingredient)-[:SUBSTITUTES_FOR]->(Ingredient)` | Substitution candidate | weight, model_version. Direction is DECISIONS #11 |
+| `(Ingredient)-[:USED_IN]->(Recipe)` | Recipe calls for this ingredient | quantity, unit (the unit's name), is_extra (LLM-found, not in the source list) |
+| `(Ingredient)-[:SUBSTITUTES_FOR]->(Ingredient)` | Substitution candidate. `(a)->(b)` means a can replace b; one edge per direction (proposed in DECISIONS #28, which answers #11) | weight, model_version |
 | `(Recipe)-[:REQUIRES]->(PrepTask)` | Recipe needs this prep step | |
 | `(PrepTask)-[:APPLIES_TO]->(Ingredient)` | Which ingredient gets prepped | |
 | `(StoreCategory)-[:LIKELY_CARRIES]->(Ingredient)` | Where to look for uncommon items | |

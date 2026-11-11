@@ -1,0 +1,21 @@
+# Local Neo4j for development. AuraDB replaces this for the deployed app by
+# changing NEO4J_URI only; nothing else in the repo depends on Docker.
+services:
+  neo4j:
+    # Pinned to one exact version so every laptop and CI runs the same database.
+    # 5.26 is the long-term-support line. Bump the tag here, nowhere else.
+    image: neo4j:5.26.32-community
+    ports:
+      - "7474:7474" # Browser UI (HTTP)
+      - "7687:7687" # Bolt, the protocol the Python driver uses
+    environment:
+      # Format is user/password. The password comes from .env, which compose
+      # reads automatically; the ":?" makes compose fail loudly if it is unset.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+    volumes:
+      # Named volume: lives outside the container, so `down` keeps the graph
+      # and `down -v` deletes it.
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:
