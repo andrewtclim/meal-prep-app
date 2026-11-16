@@ -6,7 +6,7 @@ The Food.com augment step now also returns the prep each recipe needs (dice the 
 ## PRs this week
 | PR | What it did | State |
 |---|---|---|
-| (link once opened) | Prep tasks and `state` in `augment.py` (schema version 4), tests, review notebook, docs | Open |
+| [#25](https://github.com/andrewtclim/meal-prep-app/pull/25) | Prep tasks and `state` in `augment.py` (schema version 4), tests, review notebook, docs | Open |
 
 ## Session: 2026-11-15
 ### What we worked on and why
