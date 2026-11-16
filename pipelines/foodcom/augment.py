@@ -1,10 +1,13 @@
-"""Stage 2 of the Food.com pipeline: add quantities, units and a cuisine with an LLM.
+"""Stage 2 of the Food.com pipeline: add quantities, units, a cuisine and prep tasks with an LLM.
 
 Reads data/interim/recipes_subset.parquet (stage 1 output). For each recipe the
 model reads the name, steps and raw ingredient lists and returns one structured
-record: a quantity and unit per ingredient, plus the cuisine. The dataset has
-no units at all, and its quantities line up with the ingredient list in only
-about 22% of recipes, so the text-reading step is unavoidable (DECISIONS #23).
+record: a quantity, unit and raw-or-cooked state per ingredient, the cuisine, and
+the prep tasks the steps state (dice the onion, marinate the chicken in X and Y).
+Prep tasks are what let the app prep a shared ingredient once for several
+recipes (DECISIONS #6, #30). The dataset has no units at all, and its quantities
+line up with the ingredient list in only about 22% of recipes, so the
+text-reading step is unavoidable (DECISIONS #23).
 
 Built one block at a time. This block defines WHAT we ask for and how we check
 the answer: the closed vocabularies, the output schema, the prompt, and a
@@ -46,7 +49,8 @@ THINKING_OFF = {"type": "disabled"}  # pass as thinking= to skip thinking tokens
 #   1 = first pilot (20 cuisines, cap 3, no extras)
 #   2 = extras + 90 cuisines, cap 2 (the 20-recipe thinking comparison)
 #   3 = one cuisine per recipe, `package` removed from UNITS
-SCHEMA_VERSION = 3
+#   4 = `state` on every ingredient, `prep_tasks` added, steps numbered (DECISIONS #30)
+SCHEMA_VERSION = 4
 PILOT_SIZE = 200
 PILOT_SEED = 42
 # The thinking-versus-no-thinking comparison uses 20 recipes, split by how the raw
@@ -69,6 +73,33 @@ UNITS = [
     "piece", "clove", "slice", "can", "bunch", "pinch", "dash",
     "to_taste",
 ]  # fmt: skip
+
+# Prep-task vocabularies (DECISIONS #30). Closed for the same reason as UNITS: the
+# graph matches tasks across recipes on exact strings, so "dice" and "diced" or
+# "finely" and "fine" must never both exist. A free-text field would also invite
+# invented detail and cost output tokens. Each technique is something two recipes
+# could share, and each is knife work or an on-ingredient treatment done BEFORE
+# cooking (not sear, bake or braise).
+TECHNIQUES = [
+    "dice", "mince", "chop", "slice", "julienne", "grate", "shred",
+    "peel", "trim", "marinate", "rub", "brine",
+]  # fmt: skip
+# Which techniques may carry a size. mince, peel and trim have no size dimension
+# (mince already means fine), so "mince garlic" always matches across recipes.
+SIZED_TECHNIQUES = {"dice", "chop", "slice", "julienne", "grate", "shred"}
+# Which techniques are defined by their inputs: the task names the other
+# ingredients it uses (soy sauce, garlic...), and those inputs identify the
+# marinade. Later dbt turns them into the Neo4j `form` (sorted names joined by " + ").
+INPUT_TECHNIQUES = {"marinate", "rub", "brine"}
+# The only techniques a task may use when no step names one (stated=false). They are
+# the prompt's defaults (garlic -> mince, onion -> dice, herbs -> chop). A marinade
+# or a slice is never implied: guessing those would invent detail.
+IMPLIED_TECHNIQUES = {"mince", "dice", "chop"}
+# A size word, only when the text states one ("finely dice" -> small). Null otherwise.
+CUT_SIZES = ["fine", "small", "medium", "large", "thin", "thick"]
+# How the ingredient is in the FINISHED dish. Feeds per-recipe substitution
+# re-ranking (a raw tomato and a cooked one are not swapped for the same things).
+STATES = ["raw", "cooked"]
 
 # Cuisines a weeknight-dinner app would filter on, 90 in all (DECISIONS #26).
 # Multi-label: a recipe can be "mexican" and "american", or a parent and its
@@ -125,6 +156,9 @@ CUISINE_PARENT = {
     "ecuadorian": "south_american",
 }  # fmt: skip
 MAX_EXTRA_INGREDIENTS = 6  # cap on ingredients the model may add beyond the source list
+# Cap on prep tasks per recipe. One task per cut ingredient, and the toy recipe has 5
+# for 8 ingredients; the biggest pilot recipe has 20 ingredients, so 12 leaves room.
+MAX_PREP_TASKS = 12
 EXTRA_BANNED_NAMES = {"salt", "water"}  # often unlisted on purpose, so never an "extra"
 
 # Rule-based cuisine baseline: Food.com keyword or category (lowercased) -> our
@@ -166,10 +200,14 @@ def build_output_schema() -> dict:
     recipe's ingredient list). We key by position instead of echoing the name:
     it is fewer output tokens (output costs 5x input) and cannot drift from the
     source spelling. Items the source list lacks go in `extra_ingredients`
-    instead, keyed by name since they have no position. Enums come from UNITS
-    and CUISINES above, so the model cannot invent a unit or a cuisine. Rules the
-    schema cannot express (one entry per slot, at most MAX_EXTRA_INGREDIENTS
-    extras) are checked by validate_result.
+    instead, keyed by name since they have no position. Every ingredient also
+    gets a `state` (raw or cooked in the finished dish). `prep_tasks` lists the
+    knife work and marinating the steps state or clearly imply (`stated` says which); a task points at ingredients by
+    position (extras are numbered after the listed ones), never by name. Enums come
+    from UNITS, CUISINES, TECHNIQUES, CUT_SIZES and STATES above, so the model
+    cannot invent a value. Rules the schema cannot express (one entry per slot,
+    valid positions, which techniques take a size or inputs, the caps) are checked
+    by validate_result.
     """
     return {
         "type": "object",
@@ -182,8 +220,9 @@ def build_output_schema() -> dict:
                         "position": {"type": "integer"},
                         "quantity": {"type": ["number", "null"]},
                         "unit": {"type": "string", "enum": UNITS},
+                        "state": {"type": "string", "enum": STATES},
                     },
-                    "required": ["position", "quantity", "unit"],
+                    "required": ["position", "quantity", "unit", "state"],
                     "additionalProperties": False,
                 },
             },
@@ -197,14 +236,43 @@ def build_output_schema() -> dict:
                         "name": {"type": "string"},
                         "quantity": {"type": ["number", "null"]},
                         "unit": {"type": "string", "enum": UNITS},
+                        "state": {"type": "string", "enum": STATES},
                     },
-                    "required": ["name", "quantity", "unit"],
+                    "required": ["name", "quantity", "unit", "state"],
                     "additionalProperties": False,
                 },
             },
             "cuisine": {"type": "string", "enum": CUISINES},
+            # Listed last on purpose: the model writes the extras first, so it
+            # already knows their position numbers when it points at them here.
+            "prep_tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ingredient": {"type": "integer"},  # position, extras numbered after the listed ones
+                        "technique": {"type": "string", "enum": TECHNIQUES},
+                        # anyOf, not a type list plus a null enum value: the API rejects the latter.
+                        "cut_size": {
+                            "anyOf": [{"type": "string", "enum": CUT_SIZES}, {"type": "null"}]
+                        },
+                        "with": {"type": "array", "items": {"type": "integer"}},  # positions
+                        "make_ahead": {"type": "boolean"},
+                        "source_step": {"type": "integer"},  # 1-based step number
+                        # true: the step names the technique ("dice the onion").
+                        # false: implied by how the step uses the ingredient
+                        # ("saute onion and garlic" needs them cut first).
+                        "stated": {"type": "boolean"},
+                    },
+                    "required": [
+                        "ingredient", "technique", "cut_size", "with", "make_ahead",
+                        "source_step", "stated",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
         },
-        "required": ["ingredients", "extra_ingredients", "cuisine"],
+        "required": ["ingredients", "extra_ingredients", "cuisine", "prep_tasks"],
         "additionalProperties": False,
     }
 
@@ -237,7 +305,7 @@ Rules:
 - Scale to the whole recipe as written, not per serving.
 - The ingredient list can be incomplete. If the instructions clearly use an
   ingredient that is NOT in the list (for example oil, or a cheese), add it to
-  extra_ingredients with its name, quantity and unit. Rules for extras:
+  extra_ingredients with its name, quantity, unit and state. Rules for extras:
   * Only add what the instructions actually use. Never invent an ingredient to
     explain a leftover raw quantity; unused raw quantities are simply ignored.
   * Do not add salt or water.
@@ -251,6 +319,45 @@ Rules:
   middle_eastern, south_american, scandinavian, caribbean) and use "other" only
   if none fit. Do not use "american" as a default when the dish has no clear
   cuisine.
+- state: for every ingredient, listed or extra, "raw" if it is still raw in the
+  finished dish (a fresh garnish, a salad vegetable) and "cooked" if it is cooked,
+  baked, boiled or otherwise heated. Judge the finished dish, not the first step.
+- prep_tasks: the preparation an ingredient needs BEFORE it is cooked or served: knife
+  work ({", ".join(sorted(SIZED_TECHNIQUES | {"mince", "peel", "trim"}))}),
+  or {", ".join(sorted(INPUT_TECHNIQUES))}. Return an empty array when nothing needs
+  preparing. Rules:
+  * Two kinds of task, told apart by `stated`. stated=true: a step names the
+    technique ("dice the onion", "sprinkle grated cheese", "sliced avocado").
+    stated=false: no step names it, but a step uses a fresh vegetable, aromatic
+    or herb in a way that needs it cut first ("saute onion and garlic",
+    "add cilantro"). For stated=false use the default technique: garlic ->
+    mince; onion, shallot, scallion, carrot, celery, peppers and other firm
+    vegetables -> dice; fresh herbs and leafy greens -> chop. If a step names a
+    different technique, use that and set stated=true.
+  * Never imply a task for meat, fish, eggs, dairy, canned or packaged food,
+    pasta, rice, liquids or anything used whole. Only a stated step gives those a
+    task (a marinade, "cube the chicken"). An ingredient name alone ("canned diced
+    tomatoes") is not evidence; a step must use it.
+  * source_step: the step number (steps are numbered from 1) that states the task,
+    or for stated=false the first step that uses the ingredient.
+  * Not cooking (sear, bake, braise), not slicing or shredding food that an
+    earlier step already cooked (slicing grilled chicken), and not pure mixing with
+    no main ingredient ("mix into pico"). Leave those out.
+  * One task per ingredient and technique. A mirepoix of onion, carrot and celery
+    is three dice tasks, one per ingredient.
+  * ingredient is a position: listed ingredients are 0..n-1, and extras are
+    numbered n, n+1, ... in the order you list them in extra_ingredients.
+  * cut_size ({", ".join(CUT_SIZES)}) only for {", ".join(sorted(SIZED_TECHNIQUES))}, and only
+    when a step states a size ("finely" -> small, "roughly" -> large, about 1/2
+    inch -> medium, 1 inch or more -> large, 1/4 inch or less -> small). Otherwise
+    null, always null for stated=false. Never guess.
+  * with: only for {", ".join(sorted(INPUT_TECHNIQUES))}. The positions of the other
+    ingredients used in the marinade, rub or brine, never the task's own
+    ingredient. Empty for every other technique.
+  * make_ahead: true if it can be done at the start of the week without hurting the
+    dish (diced onion, grated cheese, marinated chicken); false if it must be done
+    fresh (diced tomato, chopped cilantro, sliced avocado). A false task still counts.
+  * At most {MAX_PREP_TASKS} tasks. Return an empty array if there is no prep.
 """
 
 
@@ -260,8 +367,11 @@ def build_user_message(recipe: dict) -> str:
     Inputs: a dict-like row from recipes_subset.parquet with name, recipe_servings,
     recipe_yield, ingredient_parts, quantities_raw, quantities_aligned and
     instructions. Output: plain text. The ingredients are numbered so the model
-    can answer by position. The raw quantities are shown as a separate list, and
-    the aligned flag tells the model whether it may trust them slot for slot.
+    can answer by position. The instructions are numbered from 1 ("Step 1:") so a
+    prep task can cite the step that states it (`source_step`). Ingredients count
+    from 0 and steps from 1, and the "Step" label keeps the two apart. The raw
+    quantities are shown as a separate list, and the aligned flag tells the model
+    whether it may trust them slot for slot.
     """
     parts = [str(p) for p in recipe["ingredient_parts"]]
     quantities = [str(q) for q in recipe["quantities_raw"]]
@@ -284,7 +394,7 @@ def build_user_message(recipe: dict) -> str:
         f"Yield: {yield_text}\n\n"
         f"Ingredients ({len(parts)}):\n{numbered}\n\n"
         f"Raw quantities (numbers only, no units): {quantities}\n{alignment}\n\n"
-        "Instructions:\n" + "\n".join(steps)
+        "Instructions:\n" + "\n".join(f"Step {i}: {step}" for i, step in enumerate(steps, 1))
     )
 
 
@@ -304,15 +414,73 @@ def quantity_problems(label: str, quantity, unit) -> list[str]:
     return problems
 
 
-def validate_result(result: dict, n_ingredients: int, listed_names=()) -> list[str]:
+def prep_task_problems(tasks: list[dict], n_positions: int, n_steps: int) -> list[str]:
+    """Check the prep tasks against the rules the schema cannot express.
+
+    Inputs: the `prep_tasks` list, how many positions exist (listed ingredients plus
+    extras, so valid positions are 0..n_positions-1) and how many steps the recipe
+    has. Output: problems, empty when fine. The schema already limits technique,
+    cut_size and types; this covers the links between fields and the recipe.
+    """
+    problems = []
+    if len(tasks) > MAX_PREP_TASKS:
+        problems.append(f"at most {MAX_PREP_TASKS} prep_tasks; got {len(tasks)}")
+
+    def is_position(value) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < n_positions
+
+    seen = set()
+    for t in tasks:
+        technique, ingredient = t.get("technique"), t.get("ingredient")
+        label = f"prep task {technique} on {ingredient}"
+        if not is_position(ingredient):
+            problems.append(f"{label}: ingredient must be a position 0..{n_positions - 1}")
+        if (ingredient, technique) in seen:
+            problems.append(f"{label}: listed twice; one task per ingredient and technique")
+        seen.add((ingredient, technique))
+
+        inputs = t.get("with", [])
+        if any(not is_position(w) for w in inputs):
+            problems.append(f"{label}: every `with` value must be a position 0..{n_positions - 1}")
+        if ingredient in inputs:
+            problems.append(f"{label}: `with` must not contain the task's own ingredient")
+        if len(set(inputs)) != len(inputs):
+            problems.append(f"{label}: `with` has repeated positions")
+        if technique in INPUT_TECHNIQUES and not inputs:
+            problems.append(f"{label}: {technique} needs a non-empty `with`")
+        if technique not in INPUT_TECHNIQUES and inputs:
+            problems.append(f"{label}: `with` is only for {', '.join(sorted(INPUT_TECHNIQUES))}")
+        if t.get("cut_size") is not None and technique not in SIZED_TECHNIQUES:
+            problems.append(f"{label}: cut_size is only for {', '.join(sorted(SIZED_TECHNIQUES))}")
+
+        if t.get("stated") is False:
+            if technique not in IMPLIED_TECHNIQUES:
+                problems.append(
+                    f"{label}: an implied task (stated=false) can only use "
+                    f"{', '.join(sorted(IMPLIED_TECHNIQUES))}"
+                )
+            if t.get("cut_size") is not None:
+                problems.append(f"{label}: an implied task (stated=false) must have null cut_size")
+
+        step = t.get("source_step")
+        if not isinstance(step, int) or isinstance(step, bool) or not 1 <= step <= n_steps:
+            problems.append(f"{label}: source_step must be a step number 1..{n_steps}")
+    return problems
+
+
+def validate_result(
+    result: dict, n_ingredients: int, listed_names=(), n_steps: int = 0
+) -> list[str]:
     """Check a parsed model answer against the rules the schema cannot express.
 
-    Inputs: the answer as a dict, how many ingredient slots the recipe has, and
-    the source ingredient names (to catch extras that repeat a listed item).
+    Inputs: the answer as a dict, how many ingredient slots the recipe has, the
+    source ingredient names (to catch extras that repeat a listed item) and how
+    many steps the recipe has (to check each prep task's `source_step`; the
+    caller always passes it, and 0 makes any prep task fail).
     Output: a list of problems; empty means the answer is usable. The schema
-    guarantees types and enum values, but not "one entry per slot" or "null only
-    for to_taste", and a wrong count would silently misalign ingredients with
-    amounts. Problems are returned (not raised) so the caller can feed them back
+    guarantees types and enum values, but not "one entry per slot", "null only
+    for to_taste" or valid prep-task positions (see prep_task_problems). A wrong
+    count would silently misalign ingredients with amounts. Problems are returned (not raised) so the caller can feed them back
     in a single retry instead of paying for a blind redo.
     """
     problems = []
@@ -352,6 +520,10 @@ def validate_result(result: dict, n_ingredients: int, listed_names=()) -> list[s
         taken.add(name)
         problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
 
+    # Extras are numbered after the listed ingredients, so they are valid positions too.
+    problems += prep_task_problems(
+        result.get("prep_tasks", []), n_ingredients + len(extras), n_steps
+    )
     return problems
 
 
@@ -448,11 +620,11 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
     """Ask the model about one recipe, validate, and retry once if it fails.
 
     Inputs: an API client, a recipe dict, and optional request dials passed
-    straight to `build_request_params` (effort, thinking, max_tokens). Output: one result record (the line we
-    store): source_ref (Food.com's id, the key results are matched on), recipe_key
-    (our position number, kept for reading only), status "ok" or "failed", the
-    answer, any remaining problems,
-    attempts, and token counts summed over both attempts so cost is never
+    straight to `build_request_params` (effort, thinking, max_tokens). Output: one
+    result record (the line we store): source_ref (Food.com's id, the key results
+    are matched on), recipe_key (our position number, kept for reading only),
+    schema_version, status "ok" or "failed", the answer (ingredients with state,
+    extras, cuisine, prep_tasks), any remaining problems, attempts, and token counts summed over both attempts so cost is never
     under-reported. Two attempts is the cap: a second failure usually means a
     recipe the model cannot handle, and a third paid try rarely fixes it.
     """
@@ -470,7 +642,9 @@ def augment_recipe(client, recipe: dict, **request_options) -> dict:
         tokens_thinking += getattr(details, "thinking_tokens", 0) or 0
         try:
             answer = parse_answer(message)
-            problems = validate_result(answer, n, recipe["ingredient_parts"])
+            problems = validate_result(
+                answer, n, recipe["ingredient_parts"], len(recipe["instructions"])
+            )
         except ValueError as error:
             answer, problems = None, [str(error)]
         if not problems:
@@ -676,7 +850,7 @@ def run_compare(client, df: pd.DataFrame, mode: str, workers: int) -> list[dict]
 
 def main() -> None:
     """Command line entry point. Only the pilots exist so far (no full run yet)."""
-    parser = argparse.ArgumentParser(description="Stage 2: add units and cuisines with an LLM.")
+    parser = argparse.ArgumentParser(description="Stage 2: add units, cuisines and prep tasks with an LLM.")
     parser.add_argument("--pilot", action="store_true", help="run the fixed-seed pilot sample")
     parser.add_argument("--limit", type=int, default=PILOT_SIZE, help="recipes to run (default 200)")
     parser.add_argument(

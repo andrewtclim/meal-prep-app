@@ -10,10 +10,17 @@ from pipelines.foodcom.augment import (
     CUISINE_KEYWORDS,
     CUISINE_PARENT,
     CUISINES,
+    CUT_SIZES,
+    IMPLIED_TECHNIQUES,
+    INPUT_TECHNIQUES,
     MAX_EXTRA_INGREDIENTS,
+    MAX_PREP_TASKS,
     MODEL,
     SCHEMA_VERSION,
+    SIZED_TECHNIQUES,
+    STATES,
     SYSTEM_PROMPT,
+    TECHNIQUES,
     THINKING_OFF,
     UNITS,
     append_record,
@@ -53,18 +60,19 @@ def make_recipe(**overrides):
 def make_result(**overrides):
     result = {
         "ingredients": [
-            {"position": 0, "quantity": 8, "unit": "piece"},
-            {"position": 1, "quantity": 0.5, "unit": "cup"},
-            {"position": 2, "quantity": None, "unit": "to_taste"},
+            {"position": 0, "quantity": 8, "unit": "piece", "state": "cooked"},
+            {"position": 1, "quantity": 0.5, "unit": "cup", "state": "cooked"},
+            {"position": 2, "quantity": None, "unit": "to_taste", "state": "raw"},
         ],
         "extra_ingredients": [],
         "cuisine": "american",
+        "prep_tasks": [],
     }
     return result | overrides
 
 
 def make_extra(**overrides):
-    extra = {"name": "olive oil", "quantity": 2, "unit": "tbsp"}
+    extra = {"name": "olive oil", "quantity": 2, "unit": "tbsp", "state": "cooked"}
     return extra | overrides
 
 
@@ -151,7 +159,7 @@ def test_schema_requires_extra_ingredients():
     schema = build_output_schema()
     assert "extra_ingredients" in schema["required"]
     item = schema["properties"]["extra_ingredients"]["items"]["properties"]
-    assert item["unit"]["enum"] == UNITS and set(item) == {"name", "quantity", "unit"}
+    assert item["unit"]["enum"] == UNITS and set(item) == {"name", "quantity", "unit", "state"}
 
 
 def test_system_prompt_states_the_extra_ingredient_rules():
@@ -554,3 +562,209 @@ def test_dbt_cuisine_parent_seed_matches_cuisine_parent():
     with open(Path("dbt/seeds/cuisine_parent.csv")) as f:
         seed = {row["cuisine"]: row["parent"] for row in csv.DictReader(f)}
     assert seed == CUISINE_PARENT
+
+
+# --- Prep tasks and state (schema version 4, DECISIONS #30) ---
+
+N_STEPS = 2  # make_recipe() has two steps
+
+
+def make_task(**overrides):
+    """A valid cut task on position 0 (dice, small, step 1); override what a test breaks."""
+    task = {
+        "ingredient": 0,
+        "technique": "dice",
+        "cut_size": "small",
+        "with": [],
+        "make_ahead": True,
+        "source_step": 1,
+        "stated": True,
+    }
+    return task | overrides
+
+
+def problems_for(tasks, extras=()):
+    """Run validate_result on a 3-ingredient, 2-step recipe with these prep tasks."""
+    result = make_result(prep_tasks=tasks, extra_ingredients=list(extras))
+    return validate_result(result, 3, [], N_STEPS)
+
+
+def test_prep_vocabularies_are_consistent():
+    assert len(set(TECHNIQUES)) == len(TECHNIQUES) and len(set(CUT_SIZES)) == len(CUT_SIZES)
+    assert SIZED_TECHNIQUES <= set(TECHNIQUES) and INPUT_TECHNIQUES <= set(TECHNIQUES)
+    assert not SIZED_TECHNIQUES & INPUT_TECHNIQUES
+    assert STATES == ["raw", "cooked"]
+    assert IMPLIED_TECHNIQUES <= SIZED_TECHNIQUES | {"mince"}  # cuts only, never a marinade
+
+
+def test_schema_has_prep_task_enums_and_requires_them():
+    schema = build_output_schema()
+    assert "prep_tasks" in schema["required"]
+    task = schema["properties"]["prep_tasks"]["items"]
+    assert set(task["required"]) == set(task["properties"])
+    props = task["properties"]
+    assert props["technique"]["enum"] == TECHNIQUES
+    assert props["stated"]["type"] == "boolean"
+    assert props["cut_size"]["anyOf"] == [
+        {"type": "string", "enum": CUT_SIZES},
+        {"type": "null"},
+    ]
+    json.dumps(schema)
+
+
+def test_schema_requires_state_on_listed_and_extra_ingredients():
+    props = build_output_schema()["properties"]
+    for key in ("ingredients", "extra_ingredients"):
+        item = props[key]["items"]
+        assert item["properties"]["state"]["enum"] == STATES
+        assert "state" in item["required"]
+
+
+def test_system_prompt_states_the_prep_and_state_rules():
+    assert "prep_tasks" in SYSTEM_PROMPT and "source_step" in SYSTEM_PROMPT
+    assert "stated=false" in SYSTEM_PROMPT and "garlic ->\n    mince" in SYSTEM_PROMPT
+    assert f"At most {MAX_PREP_TASKS} tasks" in SYSTEM_PROMPT
+    assert all(t in SYSTEM_PROMPT for t in INPUT_TECHNIQUES)
+    assert '"raw"' in SYSTEM_PROMPT and '"cooked"' in SYSTEM_PROMPT
+
+
+def test_user_message_numbers_steps_from_one():
+    message = build_user_message(make_recipe())
+    assert "Step 1: Mix everything." in message and "Step 2: Serve." in message
+    assert "Step 0" not in message
+
+
+def test_good_prep_tasks_have_no_problems():
+    marinade = make_task(ingredient=0, technique="marinate", cut_size=None, **{"with": [1, 2]})
+    mince = make_task(ingredient=2, technique="mince", cut_size=None, source_step=2)
+    assert problems_for([make_task(), marinade, mince]) == []
+
+
+def test_empty_prep_tasks_are_fine():
+    assert problems_for([]) == []
+
+
+def test_task_can_point_at_an_extra_by_its_position():
+    extra = make_extra()
+    # 3 listed ingredients, so the first extra is position 3.
+    marinade = make_task(technique="marinate", cut_size=None, **{"with": [1, 3]})
+    assert problems_for([marinade], [extra]) == []
+    assert problems_for([make_task(ingredient=3)], [extra]) == []
+
+
+def test_ingredient_position_must_exist():
+    assert problems_for([make_task(ingredient=3)]) == [
+        "prep task dice on 3: ingredient must be a position 0..2"
+    ]
+    assert len(problems_for([make_task(ingredient=-1)])) == 1
+
+
+def test_with_positions_must_exist():
+    task = make_task(technique="marinate", cut_size=None, **{"with": [1, 9]})
+    assert problems_for([task]) == [
+        "prep task marinate on 0: every `with` value must be a position 0..2"
+    ]
+
+
+def test_with_must_not_contain_the_tasks_own_ingredient():
+    task = make_task(technique="rub", cut_size=None, **{"with": [0, 1]})
+    assert problems_for([task]) == [
+        "prep task rub on 0: `with` must not contain the task's own ingredient"
+    ]
+
+
+def test_with_must_not_repeat_a_position():
+    task = make_task(technique="brine", cut_size=None, **{"with": [1, 1]})
+    assert problems_for([task]) == ["prep task brine on 0: `with` has repeated positions"]
+
+
+def test_input_techniques_need_with():
+    task = make_task(technique="marinate", cut_size=None)
+    assert problems_for([task]) == ["prep task marinate on 0: marinate needs a non-empty `with`"]
+
+
+def test_with_is_only_for_input_techniques():
+    task = make_task(**{"with": [1]})
+    assert problems_for([task]) == [
+        "prep task dice on 0: `with` is only for brine, marinate, rub"
+    ]
+
+
+def test_cut_size_is_only_for_sized_techniques():
+    task = make_task(technique="mince")
+    assert problems_for([task]) == [
+        "prep task mince on 0: cut_size is only for chop, dice, grate, julienne, shred, slice"
+    ]
+    assert problems_for([make_task(technique="mince", cut_size=None)]) == []
+    assert problems_for([make_task(cut_size=None)]) == []  # a sized cut may leave it null
+
+
+def test_source_step_must_be_a_real_step():
+    for bad in (0, N_STEPS + 1, None):
+        assert problems_for([make_task(source_step=bad)]) == [
+            f"prep task dice on 0: source_step must be a step number 1..{N_STEPS}"
+        ]
+    assert problems_for([make_task(source_step=N_STEPS)]) == []
+
+
+def test_same_ingredient_and_technique_twice_is_caught():
+    problems = problems_for([make_task(), make_task(cut_size="large")])
+    assert problems == ["prep task dice on 0: listed twice; one task per ingredient and technique"]
+    # Same ingredient with a different technique, or the same technique on another one, is fine.
+    assert problems_for([make_task(), make_task(technique="slice")]) == []
+    assert problems_for([make_task(), make_task(ingredient=1)]) == []
+
+
+def test_too_many_prep_tasks_is_caught():
+    # 3 positions x 6 sized techniques gives 18 distinct, otherwise valid tasks.
+    sized = sorted(SIZED_TECHNIQUES)
+    tasks = [make_task(ingredient=i, technique=t) for t in sized for i in range(3)]
+    assert problems_for(tasks[:MAX_PREP_TASKS]) == []
+    assert problems_for(tasks[: MAX_PREP_TASKS + 1]) == [
+        f"at most {MAX_PREP_TASKS} prep_tasks; got {MAX_PREP_TASKS + 1}"
+    ]
+
+
+def test_a_boolean_is_not_a_position():
+    assert len(problems_for([make_task(ingredient=True)])) == 1
+
+
+def test_augment_recipe_retries_when_a_prep_task_is_bad():
+    bad = make_result(prep_tasks=[make_task(source_step=9)])
+    good = make_result(prep_tasks=[make_task()])
+    client = FakeClient([bad, good])
+    record = augment_recipe(client, make_recipe())
+    assert record["status"] == "ok" and record["attempts"] == 2
+    assert "source_step must be a step number 1..2" in client.requests[1]["messages"][0]["content"]
+    assert record["schema_version"] == 4
+
+
+def test_implied_task_with_a_default_technique_is_fine():
+    mince = make_task(ingredient=2, technique="mince", cut_size=None, stated=False)
+    dice = make_task(ingredient=1, technique="dice", cut_size=None, stated=False)
+    assert problems_for([mince, dice]) == []
+
+
+def test_implied_task_can_only_use_the_default_techniques():
+    task = make_task(technique="slice", cut_size=None, stated=False)
+    assert problems_for([task]) == [
+        "prep task slice on 0: an implied task (stated=false) can only use chop, dice, mince"
+    ]
+
+
+def test_an_implied_marinade_is_caught():
+    task = make_task(technique="marinate", cut_size=None, stated=False, **{"with": [1]})
+    assert problems_for([task]) == [
+        "prep task marinate on 0: an implied task (stated=false) can only use chop, dice, mince"
+    ]
+
+
+def test_implied_task_must_not_guess_a_size():
+    task = make_task(technique="dice", cut_size="small", stated=False)
+    assert problems_for([task]) == [
+        "prep task dice on 0: an implied task (stated=false) must have null cut_size"
+    ]
+
+
+def test_a_stated_task_can_use_any_technique_and_a_size():
+    assert problems_for([make_task(technique="slice", cut_size="thin", stated=True)]) == []

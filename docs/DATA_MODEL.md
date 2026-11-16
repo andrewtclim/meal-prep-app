@@ -19,7 +19,7 @@
 |---|---|---|
 | Users | users, cuisines, user_cuisine, allergens, user_allergen, user_events | Profile: name, city, budget, cuisine preferences, allergens. `user_events` is activity (views, saves) |
 | Pantry | user_pantry | What the user has now, linked to `ingredient_id` |
-| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion. Food.com recipes give `recipe_ingredient` two kinds of row: listed ingredients and LLM-found extras (DECISIONS #26), so `recipe_ingredient.is_extra` (`NOT NULL DEFAULT false`) marks the inferred ones, and both kinds go through the same ingredient normalization. `recipes` also carries `source_ref` (unique, nullable), `instructions`, `total_minutes` and `servings`, and `recipe_cuisine` links recipes to cuisines (DECISIONS #27) |
+| Recipes | recipes, ingredients, units, recipe_ingredient, ingredient_allergen, user_recipe, user_recipe_rating, prep_tasks | From the open dataset plus user-saved recipes. `prep_tasks` is not created yet; it comes from LLM extraction at ingestion. Planned, not in Postgres yet (DECISIONS #30): `prep_tasks` rows are (ingredient, technique, form), and a `recipe_prep_task` link carries the per-recipe `make_ahead`, `source_step` and `stated`; `recipe_ingredient.state` (raw or cooked in the finished dish). Food.com recipes give `recipe_ingredient` two kinds of row: listed ingredients and LLM-found extras (DECISIONS #26), so `recipe_ingredient.is_extra` (`NOT NULL DEFAULT false`) marks the inferred ones, and both kinds go through the same ingredient normalization. `recipes` also carries `source_ref` (unique, nullable), `instructions`, `total_minutes` and `servings`, and `recipe_cuisine` links recipes to cuisines (DECISIONS #27) |
 | Embeddings | recipe embeddings, ingredient embeddings (pgvector) | Recipe embeddings power semantic search. Ingredient embeddings are the substitution model's output |
 | Plans | meal_plans, plan_items | A week's approved plan and what's cooked each day |
 | Conversations | conversations, messages | Our own transcript tables. `conversations.thread_id` matches the LangGraph thread |
@@ -47,7 +47,7 @@
 |---|---|---|
 | `(Ingredient)-[:USED_IN]->(Recipe)` | Recipe calls for this ingredient | quantity, unit |
 | `(Ingredient)-[:SUBSTITUTES_FOR]->(Ingredient)` | Substitution candidate | weight, model_version. Direction is DECISIONS #11 |
-| `(Recipe)-[:REQUIRES]->(PrepTask)` | Recipe needs this prep step | |
+| `(Recipe)-[:REQUIRES]->(PrepTask)` | Recipe needs this prep step | planned: make_ahead, source_step, stated (DECISIONS #30) |
 | `(PrepTask)-[:APPLIES_TO]->(Ingredient)` | Which ingredient gets prepped | |
 | `(StoreCategory)-[:LIKELY_CARRIES]->(Ingredient)` | Where to look for uncommon items | |
 
