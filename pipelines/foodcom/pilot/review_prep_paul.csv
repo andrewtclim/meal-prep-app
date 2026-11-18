@@ -1,0 +1,63 @@
+kind,n,recipe,note,task,ingredient,technique,cut_size,with,stated,source_step,verdict
+missing,1,Lemon Cucumbers,"Cucumbers and yellow onion should be sliced for this salad. No step says so, so the model had no basis to return it.",,,,,,,,
+task,2,Sour Pickle and Sweet Peppers Coleslaw,,1.0,red cabbage,dice,,,False,1.0,wrong
+task,2,Sour Pickle and Sweet Peppers Coleslaw,,2.0,red bell peppers,dice,,,False,1.0,real
+task,2,Sour Pickle and Sweet Peppers Coleslaw,,3.0,onion,dice,,,False,1.0,real
+task,3,Mashed Potatoes With Sour Cream,,1.0,parsley,chop,,,False,7.0,real
+missing,3,Mashed Potatoes With Sour Cream,Peel the potatoes and cut them into chunks before boiling. No step says so.,,,,,,,,
+task,4,Mama's Lasagna,,1.0,fresh parsley,chop,,,False,3.0,real
+task,4,Mama's Lasagna,,2.0,mozzarella cheese,slice,,,True,5.0,real
+task,6,Fava Beans Just Like Grandma Made,,1.0,onion,dice,,,False,2.0,real
+task,6,Fava Beans Just Like Grandma Made,,2.0,garlic clove,mince,,,False,2.0,real
+task,7,Spicy Carrot Coins,,1.0,carrots,dice,,,False,1.0,wrong
+missing,7,Spicy Carrot Coins,"Carrots should be sliced into coins, based on the dish name. No step says so.",,,,,,,,
+task,8,Black Bean Chile,,1.0,onion,dice,,,False,1.0,real
+task,8,Black Bean Chile,,2.0,garlic,mince,,,False,1.0,real
+task,8,Black Bean Chile,,3.0,fresh cilantro,chop,,,False,5.0,real
+task,8,Black Bean Chile,,4.0,jalapeno pepper,dice,,,False,2.0,real
+task,9,Mussels in Spicy Coconut Broth,,1.0,fresh ginger,mince,,,False,1.0,real
+task,9,Mussels in Spicy Coconut Broth,,2.0,fresh basil,chop,,,True,3.0,real
+missing,9,Mussels in Spicy Coconut Broth,"Fresh ginger is probably sliced, not minced. No step says so.",,,,,,,,
+task,10,Cherokee Casserole,,1.0,onion,dice,,,False,2.0,real
+task,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",,1.0,yellow onion,dice,,,False,1.0,real
+task,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",,2.0,garlic cloves,mince,,,False,2.0,real
+task,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",,3.0,acorn squash,dice,,,False,2.0,real
+task,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",,4.0,bartlett pears,dice,,,False,2.0,real
+task,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes",,5.0,fresh ginger,mince,,,False,2.0,real
+missing,11,"Acorn Squash, Pear and Azuki Soup With Sauteed Shiitakes","Acorn squash should be peeled, seeded and cut into chunks. Shiitakes should be stemmed and sliced. No step says so.",,,,,,,,
+task,12,Linguine With Sun Dried Tomato Sauce,,1.0,garlic cloves,mince,,,False,1.0,real
+task,13,Cheesy Scalloped Corn Bake,,1.0,green bell pepper,dice,,,False,3.0,real
+task,13,Cheesy Scalloped Corn Bake,,2.0,celery,dice,,,False,3.0,real
+task,13,Cheesy Scalloped Corn Bake,,3.0,onion,dice,,,False,3.0,real
+task,14,Barley Risotto With Caramelized Leeks and Mushrooms,,1.0,leeks,dice,,,False,1.0,real
+task,14,Barley Risotto With Caramelized Leeks and Mushrooms,,2.0,fresh flat-leaf parsley,chop,,,False,4.0,real
+missing,14,Barley Risotto With Caramelized Leeks and Mushrooms,"Leeks are probably sliced into rings, not diced. No step says so.",,,,,,,,
+task,15,Better Tater Tot Casserole,,1.0,onion,dice,,,False,2.0,real
+task,15,Better Tater Tot Casserole,,2.0,garlic cloves,mince,,,False,2.0,real
+missing,15,Better Tater Tot Casserole,"Step 9 says grated cheese, so the cheddar should be a grate task. The model missed it.",,,,,,,,
+task,16,Black Pepper Pork with Ramen Noodles,,1.0,boneless pork chop,slice,thin,,True,1.0,wrong
+task,16,Black Pepper Pork with Ramen Noodles,,2.0,boneless pork chop,marinate,,garlic + stir-fry sauce,True,1.0,real
+task,16,Black Pepper Pork with Ramen Noodles,,3.0,garlic,mince,,,False,1.0,real
+task,16,Black Pepper Pork with Ramen Noodles,,4.0,onion,dice,,,False,7.0,real
+missing,16,Black Pepper Pork with Ramen Noodles,"Size: step 1 gives 1/4 inch strips, which the prompt's inch rule maps to small, not thin. The prompt never defines thin.",,,,,,,,
+task,17,Stir Fry Vegan Ramen,,1.0,onion,dice,,,False,2.0,real
+task,17,Stir Fry Vegan Ramen,,2.0,carrot,dice,,,False,2.0,real
+task,17,Stir Fry Vegan Ramen,,3.0,spring onion,chop,,,False,3.0,real
+missing,17,Stir Fry Vegan Ramen,"Carrot and onion are probably sliced thin, not diced, for stir-fry noodles. No step says so.",,,,,,,,
+task,18,Smoked Salmon and Basil Rolls with Creme Fraiche or Sour Cream,,1.0,fresh basil,chop,,,False,3.0,real
+missing,18,Smoked Salmon and Basil Rolls with Creme Fraiche or Sour Cream,"Labeled implied, but step 3 says chopped basil, so it should be stated.",,,,,,,,
+task,19,Special Thai Chicken Salad,,1.0,boneless chicken breasts,marinate,,fish sauce + garlic cloves + soy sauce + lime juice,True,1.0,real
+task,19,Special Thai Chicken Salad,,2.0,chicken thighs,marinate,,fish sauce + garlic cloves + soy sauce + lime juice,True,1.0,real
+task,19,Special Thai Chicken Salad,,3.0,boneless chicken breasts,rub,,fresh ground black pepper,True,1.0,real
+task,19,Special Thai Chicken Salad,,4.0,chicken thighs,rub,,fresh ground black pepper,True,1.0,real
+task,19,Special Thai Chicken Salad,,5.0,garlic cloves,mince,,,False,1.0,real
+task,19,Special Thai Chicken Salad,,6.0,garlic cloves,mince,,,False,6.0,real
+task,19,Special Thai Chicken Salad,,7.0,kaffir lime leaf,slice,thin,,True,5.0,wrong
+task,19,Special Thai Chicken Salad,,8.0,fresh basil,chop,,,False,8.0,real
+task,19,Special Thai Chicken Salad,,9.0,fresh cilantro,chop,,,False,8.0,real
+task,19,Special Thai Chicken Salad,,10.0,fresh cilantro,chop,,,False,8.0,invented
+missing,19,Special Thai Chicken Salad,"Size: step 5 says lime leaf strips with no measurement, so cut_size should be null, not thin. Fresh cilantro is listed twice in the source list (positions 3 and 18). Only the garnish in step 8 uses it, so the second chop is invented.",,,,,,,,
+task,20,Avocado Lime Rice With Grilled Shrimp,,1.0,fresh cilantro,chop,,,False,1.0,real
+task,20,Avocado Lime Rice With Grilled Shrimp,,2.0,parsley,chop,,,False,1.0,real
+task,20,Avocado Lime Rice With Grilled Shrimp,,3.0,garlic,mince,,,False,2.0,real
+missing,20,Avocado Lime Rice With Grilled Shrimp,"Avocado should be peeled, pitted and cut, and lime zest needs zesting from a lime. No step says so. Cilantro or parsley means one herb, so only one chop is needed.",,,,,,,,
