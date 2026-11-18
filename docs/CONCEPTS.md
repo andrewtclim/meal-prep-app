@@ -119,7 +119,7 @@
 
 
 ### Structured outputs and closed vocabularies
-- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 19 units. The guarantee is on the shape of the answer, not on whether the values are correct.
+- **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 18 units. The guarantee is on the shape of the answer, not on whether the values are correct.
 - **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
 - **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
 - **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
@@ -132,7 +132,7 @@
 
 ### Label granularity and near-neighbour confusion
 - **What it is:** How many classes a labeler has, and how finely they split. Too few and useful distinctions collapse into one label (filipino becomes `other`). Too many and near-neighbour labels (british and irish, szechuan and chinese) cover almost the same items, so the labeler picks between them almost at random and the data becomes inconsistent.
-- **Where we use it:** `CUISINES` and `MAX_CUISINES` in `pipelines/foodcom/augment.py` (90 labels, at most 2 per recipe). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
+- **Where we use it:** `CUISINES`, `CUISINE_PARENT` and `cuisine_path` in `pipelines/foodcom/augment.py` (90 labels, exactly 1 per recipe, with a parent table in code). We merged pairs the model cannot reliably separate, kept a few umbrella labels for countries we did not list, and allowed a region to pair with its parent.
 - **Why this over the alternative:** A short list is cheaper and more consistent but loses filters users want. A very long list is expressive but costs input tokens on every call (about +677 per call here) and splits the same dishes across labels. The confusion is a risk we have not measured yet: repeat the same recipes twice and count differing labels, then look at a confusion matrix on a hand-labelled sample.
 - **Common question:** How do you decide how many classes to use? Trade specificity against consistency, check a confusion matrix, and merge labels the evaluator cannot separate.
 
@@ -145,15 +145,21 @@
 
 ### Baseline for evaluation
 - **What it is:** A simple, cheap method whose score a model has to beat to justify its cost. It is a floor, not a competitor. Coverage (how many items get a label) and accuracy (how many labels are right) are measured separately.
-- **Where we use it:** `baseline_cuisines` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
+- **Where we use it:** `baseline_cuisine` and `CUISINE_KEYWORDS` in `pipelines/foodcom/augment.py`. It maps Food.com's own keyword and category tags to our cuisines and labels 20.1% of the subset (it was 15.9% before we widened the cuisine list to 90). It has no way to say "italian", because no tag in the data does.
 - **Why this over the alternative:** Without a baseline, "the model tagged 100% of recipes" sounds good but says nothing about whether it is right. The tradeoff is that the baseline's labels are biased toward recipes whose uploader added a cuisine tag, so agreement with it does not prove accuracy on the other 84%.
 - **Common question:** Why compare a model to a baseline? To show it adds value over something simple, and to separate "covers more" from "is more correct".
 
 ### Append-only results file (resumable jobs)
 - **What it is:** Writing each finished result as one line to a file, flushed right away, and skipping already-finished keys on a rerun. A crash loses at most the call in flight.
 - **Where we use it:** `append_record` and `load_done_keys` in `pipelines/foodcom/augment.py`, writing `data/interim/augment_results.jsonl`, keyed by `source_ref` (Food.com's own id).
-- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
+- **Why this over the alternative:** Rewriting one output file at the end would lose every paid result if the run stopped halfway. The key must be stable between runs, or a rerun could skip or repeat the wrong recipes. Our own `recipe_key` is not: it is a position number from `clean.py` (1 to N after dedupe), so editing stage 1 could shift it and silently point a saved result at a different recipe. Food.com's `source_ref` does not move. We first keyed on `recipe_key` by mistake; Paul caught it in PR review. The same review added a `schema_version` to each record: a rerun only counts records made under the current prompt, schema and validator as done, because otherwise stale results from an earlier version would be silently kept and mixed with new ones. The tradeoff is that the file is the only copy of paid output, so it needs a backup off the laptop (DECISIONS #24).
 - **Common question:** How do you make a long, paid job safe to rerun? Save results as you go under a stable key, and skip keys already saved.
+
+### Schema drift (and version stamps)
+- **What it is:** One stage of a pipeline changes the shape of what it writes (a key renamed, a list turned into a string) while a later stage still expects the old shape. Each stage's own tests keep passing, so the break only shows when the stages meet.
+- **Where we use it:** We hit it when the PR #18 review changed the answer from `cuisines` (a list) to `cuisine` (a string) while the loader (`pipelines/foodcom/load.py`, PR #20) and the dbt models (PR #21) still read `cuisines`. The guards: a `schema_version` on every record in `pipelines/foodcom/augment.py`, a loader that only accepts versions it knows, an `accepted_values` test on `schema_version` in the dbt staging model, and a pytest test that fails if the dbt `cuisine_parent` seed and `CUISINE_PARENT` in `augment.py` stop matching.
+- **Why this over the alternative:** The alternative is to rely on each person telling the other when a shape changes. A version stamp on the data plus a check at every boundary makes the break loud and early (the loader refuses, a dbt test fails) instead of loading nulls into the database without anyone noticing.
+- **Common question:** What is schema drift, and how do you guard against it in a pipeline? Version the data, validate at each boundary, and test the downstream tables.
 
 ### Environment file and .env.example
 - **What it is:** `.env` holds real secrets (API key, database URL) and is git-ignored. `.env.example` lists the same variable names with empty values and is committed, so a new clone knows what to fill in.
@@ -180,9 +186,9 @@
 - **Common question:** Why not insert your own ids? The counter does not know about them.
 
 ### jsonb
-- **What it is:** A Postgres column type that stores a JSON document in a binary form you can query and index. `answer->'cuisines'` reads one field out of it in SQL.
+- **What it is:** A Postgres column type that stores a JSON document in a binary form you can query and index. `answer->>'cuisine'` reads one field out of it in SQL.
 - **Where we use it:** the list columns and the model's whole answer in `raw.foodcom_prepared` (`pipelines/foodcom/load.py`).
-- **Why this over the alternative:** Flattened columns would break the load each time the model's output shape changes (it has changed twice). `jsonb` keeps the data whole and leaves the unpacking to dbt. The tradeoff is that a wrong field name only shows up when dbt runs, and the database does not check the inside of the document.
+- **Why this over the alternative:** Flattened columns would break the load each time the model's output shape changes (it has changed between schema versions 1, 2 and 3). `jsonb` keeps the data whole and leaves the unpacking to dbt. The tradeoff is that a wrong field name only shows up when dbt runs, and the database does not check the inside of the document.
 - **Common question:** When do you use jsonb and when real columns? Real columns for data you filter, join and constrain every day; `jsonb` for landing data whose shape may change.
 
 ### Full replace vs upsert
@@ -209,16 +215,22 @@
 - **Why this over the alternative:** If a model reads `raw` directly, a change in `raw` has to be fixed in every model. With a staging layer it is fixed once. The tradeoff is an extra hop for small projects.
 - **Common question:** What goes in staging and what goes in intermediate? Staging renames and retypes; anything that changes meaning goes in intermediate.
 
+### dbt seed
+- **What it is:** A small CSV in `dbt/seeds/` that `dbt seed` loads as a table, so models can `ref()` it like any other model. Good for a short, rarely changing lookup that only dbt uses.
+- **Where we use it:** `dbt/seeds/cuisine_parent.csv` (cantonese -> chinese). `int_recipe_cuisines` joins it to add each recipe's parent cuisine. A test in `tests/pipelines/test_augment.py` fails if the CSV differs from `CUISINE_PARENT` in `augment.py`.
+- **Why this over the alternative:** Hardcoding the pairs in SQL hides them inside a model, and having the LLM return the parent costs tokens and can disagree with the table. A seed keeps the data visible and testable. The tradeoff is two copies of the map to keep in step, which is why the drift test exists.
+- **Common question:** Why is this a dbt seed when the units and cuisines lookups are Alembic seeds? Those tables belong to Alembic and the app; this mapping is only read by dbt.
+
 ### Unpacking a jsonb list into rows (lateral join, ordinality)
 - **What it is:** `jsonb_array_elements_text(list)` returns one row per item in a jsonb list. `cross join lateral` lets it read the list from the current row of the table to its left. `with ordinality` adds a counter that starts at 1, so it needs `- 1` to match a 0-based position.
-- **Where we use it:** `dbt/models/intermediate/int_recipe_ingredients.sql` (names, extras) and `int_recipe_cuisines.sql`.
+- **Where we use it:** `dbt/models/intermediate/int_recipe_ingredients.sql` (names, extras). Cuisines are no longer a list: `int_recipe_cuisines.sql` reads the single `cuisine` and adds its parent from the seed.
 - **Why this over the alternative:** Doing the unpacking in Python would mean running a script outside the database and losing dbt's ordering and tests. The tradeoff is Postgres-specific syntax that is harder to read than a loop.
 - **Common question:** How do you turn a list inside a column into rows? Explode it with a lateral join; the counter keeps the order.
 
 ### Singular test (dbt)
 - **What it is:** A SQL file in `dbt/tests/` that returns the rows that break a rule. Zero rows means the test passes. Built-in tests (`unique`, `not_null`) cover one column; a singular test covers a rule across tables or counts.
-- **Where we use it:** `dbt/tests/recipe_cuisine_count.sql` (each recipe has 1 to 2 cuisines, no duplicates). It starts from `stg_recipes` with a left join so recipes with no rows still show up; `not_null` cannot see rows that do not exist.
-- **Why this over the alternative:** A package like `dbt_utils` has ready-made tests but is a new dependency. A short SQL file needs nothing new. The tradeoff is that constants such as the `2` are copied from `augment.py` and must be kept in step by hand.
+- **Where we use it:** `dbt/tests/recipe_cuisine_count.sql` (each recipe has 1 cuisine, or 2 when that cuisine has a parent, and no duplicates). It starts from `stg_recipes` with a left join so recipes with no rows still show up; `not_null` cannot see rows that do not exist.
+- **Why this over the alternative:** A package like `dbt_utils` has ready-made tests but is a new dependency. A short SQL file needs nothing new. The tradeoff is that the 1-or-2 rule has to stay in step with the cuisine-parent seed by hand.
 - **Common question:** What does a missing row look like to a test? Nothing, which is why you start from the table that has every row.
 
 ### dbt schema naming macro

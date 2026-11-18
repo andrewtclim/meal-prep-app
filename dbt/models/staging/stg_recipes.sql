@@ -1,5 +1,5 @@
 -- Staging view over raw.foodcom_prepared: one row per Food.com recipe.
--- Only renames columns and pulls the three lists out of the `answer` jsonb.
+-- Only renames columns and pulls the cuisine and the two lists out of the `answer` jsonb.
 -- No unpacking into rows and no name cleaning; that happens in later models.
 select
     source_ref,
@@ -9,7 +9,8 @@ select
     servings,
     total_minutes,
     ingredient_parts,
-    answer -> 'cuisines' as cuisines_json,
+    schema_version,
+    answer ->> 'cuisine' as cuisine,
     answer -> 'ingredients' as ingredients_json,
     answer -> 'extra_ingredients' as extras_json
 from {{ source('foodcom', 'foodcom_prepared') }}

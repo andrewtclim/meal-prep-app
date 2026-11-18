@@ -1,8 +1,7 @@
 -- Singular test: returns the recipes that break the cuisine rule, so zero rows = pass.
--- The rule comes from validate_result in pipelines/foodcom/augment.py: each recipe
--- has 1 to MAX_CUISINES (2) cuisines, no duplicates. An empty list produces no rows
--- in int_recipe_cuisines, so a plain not_null test cannot catch it; the left join
--- from stg_recipes can. If MAX_CUISINES changes in augment.py, change the 2 here.
+-- Since schema version 3 each recipe has one cuisine, plus its parent when it has one,
+-- so 1 or 2 rows in int_recipe_cuisines, never a repeat. A recipe with no row would
+-- vanish from int_recipe_cuisines, so the left join from stg_recipes is what catches it.
 select
     r.source_ref,
     count(c.cuisine) as n_cuisines,

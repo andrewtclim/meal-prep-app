@@ -1,0 +1,16 @@
+version: 2
+
+seeds:
+  - name: cuisine_parent
+    description: >
+      Parent cuisine of a specific cuisine (cantonese -> chinese). A copy of
+      CUISINE_PARENT in pipelines/foodcom/augment.py; a pytest test fails if the
+      two drift apart. No row means the cuisine has no parent.
+    columns:
+      - name: cuisine
+        data_tests:
+          - unique
+          - not_null
+      - name: parent
+        data_tests:
+          - not_null

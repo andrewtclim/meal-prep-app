@@ -18,8 +18,17 @@ models:
           refers to them by position, so the intermediate model needs both.
         data_tests:
           - not_null
-      - name: cuisines_json
-        description: List of cuisine names from the LLM answer.
+      - name: schema_version
+        description: >
+          Version of the answer shape that produced this row (SCHEMA_VERSION in
+          augment.py). load.py only loads versions it knows, so this is 3 for now.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [3]
+      - name: cuisine
+        description: The single cuisine the LLM chose (text, not a list).
         data_tests:
           - not_null
       - name: ingredients_json

@@ -5,8 +5,8 @@ Turns the raw Food.com recipes file into a clean set we can load. Three stages. 
 | Stage | Script | Status |
 |---|---|---|
 | 1. Clean and filter | `clean.py` | Done |
-| 2. Add units and cuisines with an LLM | `augment.py` | In progress: code and a 3-recipe test done, pilot of 200 next |
-| 3. Load into Postgres with dbt | `load.py` and `dbt/` | Later |
+| 2. Add units and cuisines with an LLM | `augment.py` | Code done (merged), 200-recipe pilot and two 20-recipe pilots run, thinking chosen; the full run waits for the budget talk |
+| 3. Load into Postgres with dbt | `load.py` and `dbt/` | In review (PRs #20, #21, #22) |
 
 ## Stage 1: clean
 
@@ -55,13 +55,13 @@ The dataset has no ingredient units, and its quantities line up with the ingredi
 
 Run it (this calls the paid API; it loads the key from `.env`):
 `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --pilot --limit 3`
-Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subset.parquet`, appends to `data/interim/augment_results.jsonl`. Rerunning skips recipes already saved (matched on Food.com's `source_ref`). `--compare thinking` or `--compare nothinking` runs the stratified 20-recipe comparison below. Only these two exist; the full run is not built.
+Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subset.parquet`, appends to `data/interim/augment_results.jsonl`. Rerunning skips recipes already saved at the current `SCHEMA_VERSION` (matched on Food.com's `source_ref`); records from an older version are redone, so stale pilot results are never silently kept. `--compare thinking` or `--compare nothinking` runs the stratified 20-recipe comparison below. Only these two exist; the full run is not built.
 
 ### How a recipe is processed
 1. `build_user_message` turns the recipe row into numbered text.
 2. `build_request_params` adds the rules (`SYSTEM_PROMPT`) and the answer shape (`build_output_schema`).
-3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], extra_ingredients: [{name, quantity, unit}], cuisines: [...]}`.
-4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", 1 to 2 cuisines, and for extras: at most 6, no salt or water, no repeat of a listed name).
+3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], extra_ingredients: [{name, quantity, unit}], cuisine}`.
+4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", and for extras: at most 6, no salt or water, no repeat of a listed name).
 5. On a problem, one retry names the problems. Then the result line is saved.
 
 ### The ingredient list is not complete (2026-10-29)
@@ -78,12 +78,12 @@ So the model also returns `extra_ingredients` for items the steps clearly use th
 A 5-recipe test on the new schema ($0.0035) passed validation on the first try and found every missing item we had spotted by eye (onions, feta, oil, taco seasoning, squid and others). Accuracy is not measured; the 20-recipe pilot hand check does that.
 
 ### The fixed lists
-- **Units (19):** g, kg, ml, l, tsp, tbsp, cup, fl_oz, oz, lb, piece, clove, slice, can, package, bunch, pinch, dash, to_taste.
-- **Cuisines (90, at most 2 per recipe):** Food.com's own cuisine tags plus the ones it lacks (italian, french, american, british, irish, mediterranean...), grouped by region in `CUISINES`. Merged on purpose: scottish and welsh into british, szechuan and hunan into chinese, lebanese and turkish into middle_eastern. A region may pair with its parent (chinese, cantonese). Umbrella labels (african, middle_eastern, scandinavian, south_american...) catch countries we did not list, and `other` is the last resort (DECISIONS #26 amendment). The earlier 20-cuisine run in the sections below used the old list.
+- **Units (18):** g, kg, ml, l, tsp, tbsp, cup, fl_oz, oz, lb, piece, clove, slice, can, bunch, pinch, dash, to_taste. `package` was removed (its size varies by product, so "1 package" and "1 lb" of the same noodles disagreed); the prompt says to give a weight for packaged goods. The other loose units (can, bunch, pinch, dash, piece) are still under review.
+- **Cuisines (90, exactly 1 per recipe):** Food.com's own cuisine tags plus the ones it lacks (italian, french, american, british, irish, mediterranean...), grouped by region in `CUISINES`. Merged on purpose: scottish and welsh into british, szechuan and hunan into chinese, lebanese and turkish into middle_eastern. The model names one cuisine; the parent comes from a small table in code (`CUISINE_PARENT`, `cuisine_path`: cantonese gives chinese), so it costs no tokens. Umbrella labels (african, middle_eastern, scandinavian, south_american...) catch countries we did not list, and `other` is the last resort (DECISIONS #26 amendment). The earlier 20-cuisine run in the sections below used the old list.
 - **Near-neighbour risk:** labels that cover almost the same food (british and irish, italian and mediterranean) can make the model inconsistent. This is not measured yet; the repeatability run and the hand check will show which pairs to merge.
 
 ### The cuisine baseline
-`baseline_cuisines` maps Food.com's own keyword and category tags to our cuisines, with no model. With the 90-cuisine list it labels 42,758 of the 212,846 recipes (20.1%; it was 33,945, 15.9%, with 20 cuisines) and returns nothing for the other 79.9%. It cannot say italian, french, american (except via one tag), british, irish or mediterranean for most recipes, because no tag in the data names them. `canadian` (3,103) and `australian` (2,250) rank high and may be where-posted tags, not food styles, so do not trust it on those two. It is the floor the model must beat, and a rough check of the model on the recipes it covers.
+`baseline_cuisine` maps Food.com's own keyword and category tags to our cuisines, with no model. With the 90-cuisine list it labels 42,758 of the 212,846 recipes (20.1%; it was 33,945, 15.9%, with 20 cuisines) and returns nothing for the other 79.9%. It cannot say italian, french, american (except via one tag), british, irish or mediterranean for most recipes, because no tag in the data names them. `canadian` (3,103) and `australian` (2,250) rank high and may be where-posted tags, not food styles, so do not trust it on those two. It is the floor the model must beat, and a rough check of the model on the recipes it covers.
 
 ### 3-recipe test (2026-10-27)
 Three recipes (seed 42, so the same ones every time), all valid on the first try:
@@ -127,10 +127,10 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - The model tagged `american` on 156 of 200 recipes, often as a second cuisine. This may be a filler tag and needs a look.
 
 ### Thinking vs no thinking: 20 recipes (2026-10-30)
-**Needs review by both of us before we choose how to run the 212,846 recipes.** Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
+**Decision (2026-11-02): use thinking.** Paul picked thinking from his notebook review (no-thinking was wrong by a large amount on Salmon Basil Rolls, Lemon Cucumbers and Fava Beans), and Andrew agrees. The two files this comparison was judged on are version-2 results, kept as the evidence behind that decision: `results_thinking_v2.jsonl` and `results_nothinking.jsonl`. (Running `--compare` under a newer version appends to the file for that mode, so the thinking file was renamed first; see the version-3 run below.) Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
 
 - **Sample:** 20 recipes, stratified by how raw quantities compare with ingredient names: 7 `equal`, 10 `more`, 3 `fewer` (fixed seed 2026, chosen so none were recipes we looked at while writing the prompt). Both modes got the same 20; only the `thinking` setting differs (`effort` low in both).
-- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl`, `results_nothinking.jsonl`, plus the notebook and `review.csv`.
+- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl` (now the version-3 run) and `results_thinking_v2.jsonl` (the v2 evidence), `results_nothinking.jsonl` (v2), plus the notebook and `review.csv`.
 
 | | Thinking | No thinking |
 |---|---|---|
@@ -144,12 +144,19 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - The base cost rose from the earlier $108 direct / $54 batch estimate to about $160 / $80 with thinking: the 90-cuisine list and the extras rules add about 677 input tokens per call, and the answers are longer.
 - One recipe (Cheesy Scalloped Corn Bake) shows a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps say "mix all ingredients", so neither mode can recover it or know the amounts. We have not decided whether to flag such recipes as possibly incomplete.
 
+### Version-3 run of the same 20 recipes (2026-11-05)
+After the PR #18 review changes (one cuisine, `package` removed, `schema_version` 3) we reran the same 20 recipes in thinking mode so the stage 3 loader and dbt models have version-3 data to test against: `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --compare thinking`, writing a fresh `pilot/results_thinking.jsonl` (the v2 thinking file was renamed first).
+- 20 of 20 valid on the first try, no retries. Cost $0.0146 (about $0.00073 per recipe, close to version 2). Every record has `schema_version` 3 and one `cuisine` string.
+- Paul's `load.py --dry-run` (PR #20) reads all 20 records and builds 20 rows.
+- Both runs are thinking mode (same model, same 20 recipes); only the rules changed between them. 34 of 170 ingredient entries differ in unit or quantity (20%). Two identical thinking runs differed on about a third of entries in an earlier 5-recipe test, so 20% is within run-to-run noise and shows no clear shift from the new rules.
+- The first cuisine changed on 4 of 20 recipes and the new answers are reasonable, not blocking. Two are worth a mention: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. It is 20 recipes, one run each, so it may be noise. A prompt change would mean a new `SCHEMA_VERSION`, so it is only noted for the team meeting.
+
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
-- Which mode to use: the cost side is measured (above); the accuracy side waits on our two reviews of the 20-recipe notebook.
+- The mode to use is decided (thinking, 2026-11-02). Still open (low priority): whether the two small cuisine differences above are worth a prompt change.
 - Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 56 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 62 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.

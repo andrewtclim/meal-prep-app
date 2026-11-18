@@ -11,3 +11,6 @@ models:
     intermediate:
       +materialized: view
       +schema: intermediate
+seeds:
+  recipe_transforms:
+    +schema: seeds

@@ -37,7 +37,7 @@ def upgrade() -> None:
        recipes use the same table and have no source id, steps, or times.
        source_ref is unique so the later upsert (ON CONFLICT) can tell a
        recipe it has already loaded from a new one.
-    3. Create the recipe_cuisine junction table (recipes have 1 or 2 cuisines).
+    3. Create the recipe_cuisine junction table (one cuisine per recipe, plus its parent when the cuisine has one).
     4. Add recipe_ingredient.is_extra: true for ingredients the LLM found in the
        steps that the source list lacks (DECISIONS #26). Existing and user-saved
        rows are listed ingredients, so the default is false.

@@ -418,6 +418,27 @@ Nothing builds from a source alone; it matters when `stg_recipes.sql` uses it an
 - Decided: `is_extra` is `NOT NULL DEFAULT false` (see above).
 - DATA_MODEL.md still says the flag is "proposed, not created yet"; update it in the PR that applies this migration.
 - CONCEPTS (to write in this PR): rebase vs merge, join on a stable key (`source_ref` vs a position number).
+### Session: closing out PR #20 after Andrew's review (2026-11-04)
+Andrew's review of #20 found schema drift: after my review of #18 he changed the model's answer from `cuisines` (a list) to `cuisine` (one string) and stamped every record with a `schema_version` (now 3). `load.py` still expected the old shape, so a version-3 file would have loaded 0 rows. I approved #18, so its shape is final.
+
+- **Rebased** `feat/dbt-staging` onto #18 (`bf71996`). The one conflict was in `docs/DECISIONS.md`: kept the "Decided: use thinking" text from #18 and dropped our old "Open" line it replaces.
+- **Loader now needs `cuisine` (a string)** and keeps `schema_version` in the table.
+- **Loader rejects unknown versions.** This is the usual way to stop mixed data shapes in one table: stamp each record with the version that produced it, and have the reader fail on a version it does not know.
+
+```python
+# pipelines/foodcom/load.py
+KNOWN_SCHEMA_VERSIONS = (3,)
+...
+elif record.get("schema_version") not in KNOWN_SCHEMA_VERSIONS:
+    skipped["unknown schema_version"] += 1
+```
+
+The list is explicit, not imported from `augment.py`, so bumping the version in `augment.py` makes the loader skip everything (and print why) until someone updates the loader and dbt model on purpose.
+- **Wording fixed** in the migration docstring and in DECISIONS #27 and CONCEPTS ("1 or 2 cuisines", "changed twice", unit counts).
+- **Package unit dropped** in a new revision, `c3a91e5d7f20` (the first one is already applied on Supabase, so it cannot be edited). Upgrade deletes the row; downgrade puts it back.
+- **Not done:** the committed pilot file is version 2, so `load.py --pilot` now skips all 20 rows until we have version-3 pilot results.
+- **Table change:** `raw.foodcom_prepared` gained a `schema_version` column, so the existing table on Supabase must be dropped by hand once before the next load (see `replace_table`).
+
 ## What we'd explain differently next time
 - The word "raw" is misleading here. It suggests untouched source data, but our `raw` holds prepared data (cleaned recipes plus LLM answers). Read DECISIONS #24 before assuming otherwise.
 - Why the migration copies the lists instead of importing them, and why hardcoded ids break an identity column. Both were first-draft mistakes worth remembering.
@@ -586,3 +607,26 @@ on conflict (source_ref) do update set recipe_name = excluded.recipe_name, ...
 **Verified on the real database, in a transaction rolled back at the end.** Real `--dry-run` stopped at the check: `cuisines` is empty, and the pilot uses 9 cuisine names (american, chinese, italian, japanese, middle_eastern, native_american, other, tex_mex, thai). To exercise the writes anyway, a throwaway script added those 9 names inside an outer transaction, ran `publish` twice, inspected, then rolled everything back. Run 1: 127 ingredients, 20 recipes, 192 ingredient lines, 21 cuisine links. Run 2: the same totals and the same `recipe_id`s (idempotent). Afterwards every `public` table was back to 0 rows. Recipe 71222 came out in order with its extras last and `to_taste` lines with null quantity. Tests: 8 new pytest tests without a database (every SQL file listed and non-empty, parents before children, each delete right before its insert, deletes limited to staging recipes, message formatting); not tested automatically: the SQL itself (needs Postgres in CI).
 
 New concepts: transaction and rollback (dry run), transform vs publish (`CONCEPTS.md`). Still open: cuisine seeds (Alembic revision after Andrew's list is final), version 3 shape, `dbt parse` in CI, the macro comparison PR.
+
+### Version 3 shape in the dbt models (PR #21, 2026-11-04)
+As planned in the 2026-11-04 decision above, the cuisine change now lands as one separate change, after #20 was fixed and rebased on #18 and #21 was rebased onto #20 (`git rebase --onto`, clean). In dbt:
+
+```sql
+-- dbt/models/staging/stg_recipes.sql
+schema_version,
+answer ->> 'cuisine' as cuisine,
+```
+
+`->>` returns text (the single cuisine string), where `->` returned jsonb (the old list). `schema_version` comes from the new column `load.py` stores. `int_recipe_cuisines` no longer unpacks a list: it selects `source_ref, cuisine`. `recipe_cuisine_count` now requires exactly 1 cuisine per recipe, and `stg_recipes` tests that `schema_version` is 3 and `cuisine` is not null.
+
+Checked: `dbt parse` passes. Not checked: `dbt build`, because `raw.foodcom_prepared` on Supabase still holds the 20 version-2 rows and has no `schema_version` column; it needs version-3 data first.
+
+**Parent cuisines (cantonese gives chinese).** The parent used to be in the model's list; in version 3 only `CUISINE_PARENT` in `augment.py` has it. We copied that map into a dbt seed (`dbt/seeds/cuisine_parent.csv`, 28 pairs, see [dbt seed](../docs/CONCEPTS.md#dbt-seed)) and `int_recipe_cuisines` adds the parent with a `union all` and a join:
+
+```sql
+select r.source_ref, p.parent as cuisine
+from {{ ref('stg_recipes') }} as r
+inner join {{ ref('cuisine_parent') }} as p on p.cuisine = r.cuisine
+```
+
+So a recipe has 1 row, or 2 when its cuisine has a parent, and `recipe_cuisine_count` checks 1 to 2 with no repeats. Two copies of the map now exist, so `test_dbt_cuisine_parent_seed_matches_cuisine_parent` fails if they drift. Checked: `dbt parse` and all 95 pytest tests pass. Not checked: `dbt seed` and `dbt build` on real data (see above).
