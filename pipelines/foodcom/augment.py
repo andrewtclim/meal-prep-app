@@ -50,7 +50,9 @@ THINKING_OFF = {"type": "disabled"}  # pass as thinking= to skip thinking tokens
 #   2 = extras + 90 cuisines, cap 2 (the 20-recipe thinking comparison)
 #   3 = one cuisine per recipe, `package` removed from UNITS
 #   4 = `state` on every ingredient, `prep_tasks` added, steps numbered (DECISIONS #30)
-SCHEMA_VERSION = 4
+#   5 = implied prep tasks may use any cut technique, chosen from the ingredient and the
+#       recipe name (coleslaw -> shred the cabbage), not one fixed default per ingredient
+SCHEMA_VERSION = 5
 PILOT_SIZE = 200
 PILOT_SEED = 42
 # The thinking-versus-no-thinking comparison uses 20 recipes, split by how the raw
@@ -91,10 +93,13 @@ SIZED_TECHNIQUES = {"dice", "chop", "slice", "julienne", "grate", "shred"}
 # ingredients it uses (soy sauce, garlic...), and those inputs identify the
 # marinade. Later dbt turns them into the Neo4j `form` (sorted names joined by " + ").
 INPUT_TECHNIQUES = {"marinate", "rub", "brine"}
-# The only techniques a task may use when no step names one (stated=false). They are
-# the prompt's defaults (garlic -> mince, onion -> dice, herbs -> chop). A marinade
-# or a slice is never implied: guessing those would invent detail.
-IMPLIED_TECHNIQUES = {"mince", "dice", "chop"}
+# The only techniques a task may use when no step names one (stated=false). The cuts:
+# version 4 allowed only mince, dice and chop (one default per ingredient), which forced
+# "dice" on cabbage in a coleslaw. Plus marinate, only when a step coats an ingredient in
+# a named mixture and lets it stand (the `with` inputs then come from the text). Rub,
+# brine, peel and trim stay stated-only: they add little or need the word to be safe.
+IMPLIED_CUTS = SIZED_TECHNIQUES | {"mince"}
+IMPLIED_TECHNIQUES = IMPLIED_CUTS | {"marinate"}
 # A size word, only when the text states one ("finely dice" -> small). Null otherwise.
 CUT_SIZES = ["fine", "small", "medium", "large", "thin", "thick"]
 # How the ingredient is in the FINISHED dish. Feeds per-recipe substitution
@@ -159,6 +164,14 @@ MAX_EXTRA_INGREDIENTS = 6  # cap on ingredients the model may add beyond the sou
 # Cap on prep tasks per recipe. One task per cut ingredient, and the toy recipe has 5
 # for 8 ingredients; the biggest pilot recipe has 20 ingredients, so 12 leaves room.
 MAX_PREP_TASKS = 12
+# Head nouns of ingredients that are liquids or fats. A cut (dice, slice, mince...) on one of
+# these is a position slip: in Stir Fry Vegan Ramen the model wrote the number of the
+# sesame oil when it meant the onion (the extras are numbered after the listed ones).
+# The schema cannot see names, so the validator checks, and the retry names the mistake.
+LIQUID_WORDS = {
+    "oil", "sauce", "vinegar", "juice", "water", "broth", "stock", "wine", "milk",
+    "syrup", "honey", "paste", "extract", "mayonnaise", "ketchup",
+}  # fmt: skip
 EXTRA_BANNED_NAMES = {"salt", "water"}  # often unlisted on purpose, so never an "extra"
 
 # Rule-based cuisine baseline: Food.com keyword or category (lowercased) -> our
@@ -329,15 +342,28 @@ Rules:
   * Two kinds of task, told apart by `stated`. stated=true: a step names the
     technique ("dice the onion", "sprinkle grated cheese", "sliced avocado").
     stated=false: no step names it, but a step uses a fresh vegetable, aromatic
-    or herb in a way that needs it cut first ("saute onion and garlic",
-    "add cilantro"). For stated=false use the default technique: garlic ->
-    mince; onion, shallot, scallion, carrot, celery, peppers and other firm
-    vegetables -> dice; fresh herbs and leafy greens -> chop. If a step names a
-    different technique, use that and set stated=true.
+    or herb in a way that needs it cut first ("saute onion and garlic", "combine
+    all ingredients" in a slaw). Pick the cut a cook would use for this ingredient
+    in this dish, from: {", ".join(sorted(IMPLIED_CUTS))}. Two cues:
+    (1) the ingredient: garlic and ginger -> mince; fresh herbs -> chop.
+    (2) the recipe name and the dish it names: coleslaw or slaw -> shred the
+    cabbage; salad -> slice cucumber or mushrooms; salsa or pico -> dice; stir fry
+    -> slice; soup or stew -> dice or chop.
+    When neither cue is clear, use the default: onion, shallot, carrot, celery,
+    peppers and other firm vegetables -> dice; herbs and leafy greens -> chop.
+    The recipe name only picks the technique for an ingredient a step already
+    uses. It never adds an ingredient or a task the steps do not use. Never imply
+    peel, trim, rub or brine: only a step that names one gives that task. Marinate
+    may be implied only when a step coats or soaks an ingredient in a named mixture
+    AND lets it stand, rest or chill ("coat the pork with garlic and sauce, let
+    stand 15 minutes"): then put the mixture's ingredients in `with` and set
+    stated=false. An optional ingredient ("if desired") gets no task.
+    If a step names a different technique, use that and set stated=true.
   * Never imply a task for meat, fish, eggs, dairy, canned or packaged food,
     pasta, rice, liquids or anything used whole. Only a stated step gives those a
-    task (a marinade, "cube the chicken"). An ingredient name alone ("canned diced
-    tomatoes") is not evidence; a step must use it.
+    task ("cube the chicken"), except the implied marinade described above. An
+    ingredient name alone ("canned diced tomatoes") is not evidence; a step must
+    use it.
   * source_step: the step number (steps are numbered from 1) that states the task,
     or for stated=false the first step that uses the ingredient.
   * Not cooking (sear, bake, braise), not slicing or shredding food that an
@@ -414,13 +440,26 @@ def quantity_problems(label: str, quantity, unit) -> list[str]:
     return problems
 
 
-def prep_task_problems(tasks: list[dict], n_positions: int, n_steps: int) -> list[str]:
+def is_liquid(name: str) -> bool:
+    """True if an ingredient name ends in a liquid or fat word ("sesame oil", "soy sauce, light").
+
+    Only the last word before the first comma counts, so "oil-packed sun-dried tomatoes"
+    (a tomato) is not a liquid but "toasted sesame oil" is.
+    """
+    words = re.findall(r"[a-z]+", name.split(",")[0].lower())
+    return bool(words) and words[-1] in LIQUID_WORDS
+
+
+def prep_task_problems(
+    tasks: list[dict], n_positions: int, n_steps: int, names: list[str] | None = None
+) -> list[str]:
     """Check the prep tasks against the rules the schema cannot express.
 
     Inputs: the `prep_tasks` list, how many positions exist (listed ingredients plus
     extras, so valid positions are 0..n_positions-1) and how many steps the recipe
-    has. Output: problems, empty when fine. The schema already limits technique,
-    cut_size and types; this covers the links between fields and the recipe.
+    has, and optionally the ingredient names by position (listed, then extras), used to
+    reject a cut on a liquid. Output: problems, empty when fine. The schema already limits
+    technique, cut_size and types; this covers the links between fields and the recipe.
     """
     problems = []
     if len(tasks) > MAX_PREP_TASKS:
@@ -435,6 +474,12 @@ def prep_task_problems(tasks: list[dict], n_positions: int, n_steps: int) -> lis
         label = f"prep task {technique} on {ingredient}"
         if not is_position(ingredient):
             problems.append(f"{label}: ingredient must be a position 0..{n_positions - 1}")
+        name = names[ingredient] if names and is_position(ingredient) and ingredient < len(names) else ""
+        if name and technique not in INPUT_TECHNIQUES and is_liquid(name):
+            problems.append(
+                f"{label}: '{name}' is a liquid or fat and cannot be cut; "
+                "check that this position is the ingredient you mean"
+            )
         if (ingredient, technique) in seen:
             problems.append(f"{label}: listed twice; one task per ingredient and technique")
         seen.add((ingredient, technique))
@@ -521,8 +566,9 @@ def validate_result(
         problems += quantity_problems(f"extra '{name}'", e.get("quantity"), e.get("unit"))
 
     # Extras are numbered after the listed ingredients, so they are valid positions too.
+    names = [str(n) for n in listed_names] + [str(e.get("name", "")) for e in extras]
     problems += prep_task_problems(
-        result.get("prep_tasks", []), n_ingredients + len(extras), n_steps
+        result.get("prep_tasks", []), n_ingredients + len(extras), n_steps, names
     )
     return problems
 

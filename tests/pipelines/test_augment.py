@@ -11,6 +11,7 @@ from pipelines.foodcom.augment import (
     CUISINE_PARENT,
     CUISINES,
     CUT_SIZES,
+    IMPLIED_CUTS,
     IMPLIED_TECHNIQUES,
     INPUT_TECHNIQUES,
     MAX_EXTRA_INGREDIENTS,
@@ -31,6 +32,7 @@ from pipelines.foodcom.augment import (
     build_user_message,
     cuisine_path,
     estimate_cost,
+    is_liquid,
     load_done_keys,
     parse_answer,
     quantity_group,
@@ -594,7 +596,8 @@ def test_prep_vocabularies_are_consistent():
     assert SIZED_TECHNIQUES <= set(TECHNIQUES) and INPUT_TECHNIQUES <= set(TECHNIQUES)
     assert not SIZED_TECHNIQUES & INPUT_TECHNIQUES
     assert STATES == ["raw", "cooked"]
-    assert IMPLIED_TECHNIQUES <= SIZED_TECHNIQUES | {"mince"}  # cuts only, never a marinade
+    assert IMPLIED_CUTS == SIZED_TECHNIQUES | {"mince"}
+    assert IMPLIED_TECHNIQUES == IMPLIED_CUTS | {"marinate"}  # never rub, brine, peel or trim
 
 
 def test_schema_has_prep_task_enums_and_requires_them():
@@ -622,7 +625,13 @@ def test_schema_requires_state_on_listed_and_extra_ingredients():
 
 def test_system_prompt_states_the_prep_and_state_rules():
     assert "prep_tasks" in SYSTEM_PROMPT and "source_step" in SYSTEM_PROMPT
-    assert "stated=false" in SYSTEM_PROMPT and "garlic ->\n    mince" in SYSTEM_PROMPT
+    assert "stated=false" in SYSTEM_PROMPT and "garlic and ginger -> mince" in SYSTEM_PROMPT
+    # Version 5: the recipe name is a cue for the technique, but never creates a task.
+    assert "recipe name" in SYSTEM_PROMPT and "coleslaw or slaw -> shred" in SYSTEM_PROMPT
+    assert "never adds an ingredient or a task" in SYSTEM_PROMPT.replace("\n    ", " ")
+    assert all(t in SYSTEM_PROMPT for t in sorted(IMPLIED_CUTS))
+    assert "AND lets it stand" in SYSTEM_PROMPT.replace("\n    ", " ")  # implied marinade needs both
+    assert "if desired" in SYSTEM_PROMPT
     assert f"At most {MAX_PREP_TASKS} tasks" in SYSTEM_PROMPT
     assert all(t in SYSTEM_PROMPT for t in INPUT_TECHNIQUES)
     assert '"raw"' in SYSTEM_PROMPT and '"cooked"' in SYSTEM_PROMPT
@@ -736,7 +745,7 @@ def test_augment_recipe_retries_when_a_prep_task_is_bad():
     record = augment_recipe(client, make_recipe())
     assert record["status"] == "ok" and record["attempts"] == 2
     assert "source_step must be a step number 1..2" in client.requests[1]["messages"][0]["content"]
-    assert record["schema_version"] == 4
+    assert record["schema_version"] == SCHEMA_VERSION
 
 
 def test_implied_task_with_a_default_technique_is_fine():
@@ -745,18 +754,31 @@ def test_implied_task_with_a_default_technique_is_fine():
     assert problems_for([mince, dice]) == []
 
 
-def test_implied_task_can_only_use_the_default_techniques():
-    task = make_task(technique="slice", cut_size=None, stated=False)
-    assert problems_for([task]) == [
-        "prep task slice on 0: an implied task (stated=false) can only use chop, dice, mince"
-    ]
+def test_implied_task_may_use_any_cut_technique():
+    for technique in sorted(IMPLIED_CUTS):
+        task = make_task(technique=technique, cut_size=None, stated=False)
+        assert problems_for([task]) == [], technique
 
 
-def test_an_implied_marinade_is_caught():
-    task = make_task(technique="marinate", cut_size=None, stated=False, **{"with": [1]})
-    assert problems_for([task]) == [
-        "prep task marinate on 0: an implied task (stated=false) can only use chop, dice, mince"
-    ]
+def test_implied_marinade_is_allowed_with_inputs_but_not_without():
+    marinade = make_task(technique="marinate", cut_size=None, stated=False, **{"with": [1, 2]})
+    assert problems_for([marinade]) == []
+    no_inputs = make_task(technique="marinate", cut_size=None, stated=False)
+    assert problems_for([no_inputs]) == ["prep task marinate on 0: marinate needs a non-empty `with`"]
+
+
+def test_implied_task_cannot_use_peel_trim_rub_or_brine():
+    allowed = "chop, dice, grate, julienne, marinate, mince, shred, slice"
+    for technique in ("peel", "trim"):
+        task = make_task(technique=technique, cut_size=None, stated=False)
+        assert problems_for([task]) == [
+            f"prep task {technique} on 0: an implied task (stated=false) can only use {allowed}"
+        ]
+    for technique in ("rub", "brine"):  # `with` is filled, so only the implied rule fires
+        task = make_task(technique=technique, cut_size=None, stated=False, **{"with": [1]})
+        assert problems_for([task]) == [
+            f"prep task {technique} on 0: an implied task (stated=false) can only use {allowed}"
+        ]
 
 
 def test_implied_task_must_not_guess_a_size():
@@ -768,3 +790,35 @@ def test_implied_task_must_not_guess_a_size():
 
 def test_a_stated_task_can_use_any_technique_and_a_size():
     assert problems_for([make_task(technique="slice", cut_size="thin", stated=True)]) == []
+
+
+def test_is_liquid_looks_at_the_head_noun_only():
+    assert is_liquid("sesame oil") and is_liquid("Soy Sauce, light") and is_liquid("bottled lemon juice")
+    assert not is_liquid("oil-packed sun-dried tomatoes")  # a tomato, not an oil
+    assert not is_liquid("olive") and not is_liquid("garlic, minced") and not is_liquid("")
+
+
+def test_a_cut_on_a_liquid_is_caught_as_a_position_slip():
+    # The Stir Fry Vegan Ramen mistake: extras are numbered after the 3 listed ingredients,
+    # and the model pointed at the sesame oil (position 3) instead of the onion (position 4).
+    result = make_result(
+        extra_ingredients=[make_extra(name="sesame oil"), make_extra(name="onion")],
+        prep_tasks=[make_task(ingredient=3, technique="dice", cut_size=None, stated=False)],
+    )
+    problems = validate_result(result, 3, ["eggs", "mayonnaise", "salt"], N_STEPS)
+    assert problems == [
+        (
+            "prep task dice on 3: 'sesame oil' is a liquid or fat and cannot be cut; "
+            "check that this position is the ingredient you mean"
+        )
+    ]
+    result["prep_tasks"][0]["ingredient"] = 4  # the onion
+    assert validate_result(result, 3, ["eggs", "mayonnaise", "salt"], N_STEPS) == []
+
+
+def test_a_marinade_may_use_a_liquid_as_an_input_but_not_as_the_target():
+    result = make_result(
+        extra_ingredients=[make_extra(name="soy sauce")],
+        prep_tasks=[make_task(ingredient=0, technique="marinate", cut_size=None, **{"with": [3]})],
+    )
+    assert validate_result(result, 3, ["eggs", "mayonnaise", "salt"], N_STEPS) == []

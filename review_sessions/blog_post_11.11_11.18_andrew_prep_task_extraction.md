@@ -80,7 +80,7 @@ Solid arrows exist now. Dotted arrows are the follow-ups: `load.py` still skips 
 | Cost for the 20 | $0.0146 | $0.0200 | $0.0240 |
 | Recipes with a task / tasks | n/a | 4 / 5 | 18 / 50 |
 
-With implied tasks there were 7 groups shared by 2 or more recipes (onion dice in 8 of 20). 41 of the 50 tasks are implied, so the hand review in `pilot/prep_tasks_v4.ipynb` decides how far to trust them. Two things the data told us: `garlic` and `garlic cloves` do not match across recipes (normalization is still to do), and the model skipped a stated task ("sprinkle grated cheese"), so not every miss is the data's fault.
+With implied tasks there were 7 groups shared by 2 or more recipes (onion dice in 8 of 20). 41 of the 50 tasks are implied, so the hand review (the version-4 notebook, later replaced by `pilot/prep_tasks_v5.ipynb`) decides how far to trust them. Two things the data told us: `garlic` and `garlic cloves` do not match across recipes (normalization is still to do), and the model skipped a stated task ("sprinkle grated cheese"), so not every miss is the data's fault.
 
 ### Decisions and concepts
 - DECISIONS #30: prep-task extraction in augment (schema version 4). Proposed.

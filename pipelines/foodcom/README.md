@@ -5,7 +5,7 @@ Turns the raw Food.com recipes file into a clean set we can load. Three stages. 
 | Stage | Script | Status |
 |---|---|---|
 | 1. Clean and filter | `clean.py` | Done |
-| 2. Add units, cuisines and prep tasks with an LLM | `augment.py` | Code done through schema version 4 (prep tasks, in review), pilots run, thinking chosen; the full run waits for the budget talk and the prep-task review |
+| 2. Add units, cuisines and prep tasks with an LLM | `augment.py` | Code done through schema version 5 (prep tasks, in review), pilots run, thinking chosen; the 5,000-recipe run for Postgres and Neo4j is next |
 | 3. Load into Postgres with dbt | `load.py` and `dbt/` | In review (PRs #20, #21, #22) |
 
 ## Stage 1: clean
@@ -180,16 +180,33 @@ Each recipe's answer now lists the prep the steps need, so the app can prep a sh
 
 - **Why two runs:** with stated tasks only, 16 of 20 recipes came back empty. Food.com steps are terse and rarely say to chop an onion. Mostly that is the data, but not all of it: the model skipped "sprinkle grated cheese" in Better Tater Tot Casserole even though that is a stated task. Allowing implied tasks gave 7 groups shared by 2 or more recipes (onion dice in 8 of 20), but 82% of tasks are judgments, so the hand review decides how far to trust them.
 - **`garlic` and `garlic cloves` do not match** (4 and 3 recipes), because ingredient names are not normalized yet.
-- **Review it:** `cd pipelines/foodcom/pilot`, open `prep_tasks_v4.ipynb` in any kernel with pandas (no API key, no API calls), read the recipe cards, fill the verdict cells, set `REVIEWER` and run the last cell to save `review_prep_<name>.csv`.
-- **Files:** `results_thinking.jsonl` (version 4), `results_thinking_v4_strict.jsonl` (the stated-only run), `results_thinking_v3.jsonl` (version 3), `results_thinking_v2.jsonl` and `results_nothinking.jsonl` (the version-2 comparison).
+- **Paul's review of this run** (`pilot/review_prep_paul.csv`): of the 50 tasks, 45 real, 4 wrong, 1 invented; and 12 prep tasks the rules would want that the model left out. It was made in the version-4 notebook, which version 5 replaced (see below).
+- **Files:** `results_thinking_v4_implied.jsonl` (this run, version 4), `results_thinking_v4_strict.jsonl` (the stated-only run), `results_thinking_v3.jsonl` (version 3), `results_thinking_v2.jsonl` and `results_nothinking.jsonl` (the version-2 comparison). `results_thinking.jsonl` is the version-5 run below.
 - **Open:** pure mixing steps ("mix into pico") are left out, and `cut` is not a technique (DECISIONS #30).
 
+### Version 5: any cut, recipe-name cue, implied marinade (2026-11-19)
+Reading the version-4 run, cabbage in a coleslaw came back as `dice` because the prompt gave one fixed default per ingredient and the validator allowed only mince, dice and chop for implied tasks. Version 5 changes:
+
+| Change | Before | Now |
+|---|---|---|
+| Implied techniques | mince, dice, chop | any cut: mince, dice, chop, slice, shred, grate, julienne |
+| How the model picks | one default per ingredient | the ingredient **and the recipe name** ("coleslaw: shred the cabbage", "stir fry: slice"), with the old default as the fallback |
+| Implied marinade | never | allowed when a step coats an ingredient in a named mixture **and** lets it stand (needs `with`); rub, brine, peel, trim stay stated-only |
+| Optional ingredients ("if desired") | could get a task | no task |
+| Cut on a liquid or fat (oil, sauce, juice...) | accepted | rejected by the validator, so the retry fixes it |
+
+The last row came from the pilot: in Stir Fry Vegan Ramen the model wrote the number of the sesame oil (an extra) when it meant the onion, so the oil was "diced". The schema cannot see names, so `prep_task_problems` checks the head noun of the ingredient name (`is_liquid`) and the retry names the mistake. A recipe name never creates a task, it only picks the technique for an ingredient a step already uses.
+
+**Pilot (the same 20 recipes):** 20 of 20 valid on the first try, no retries, $0.0246 (4,710 in and 1,521 out per recipe; full run about $262 direct or $131 on Batches). 55 tasks in 19 recipes, and 14 of 20 recipes differ from the version-4 run, partly run-to-run noise. Cabbage in the coleslaw became `shred`, carrot coins `slice`, and the grated and shredded cheese in two recipes became stated tasks. Andrew and Paul read it together and judged it good enough. The implied-marinade rule and the liquid check came after this pilot, so the saved pilot (`results_thinking.jsonl`) predates them. Compare it with the earlier runs in `pilot/prep_tasks_v5.ipynb` (any kernel with pandas, no API calls).
+
+**We stopped tuning here.** We considered an automated loop (an LLM judge plus an editor that rewrites the prompt against a held-out recipe set) and dropped it for the MVP: the judge would first need calibrating against human labels, and the prompt is already good enough. Reopen it if the review of the full run finds systematic errors.
+
 ### Not done yet
-- The 30-recipe review file for a hand check of accuracy, and the hand review of the prep tasks (`prep_tasks_v4.ipynb`).
+- The 30-recipe review file for a hand check of accuracy.
 - The mode to use is decided (thinking, 2026-11-02). Still open (low priority): whether the two small cuisine differences above are worth a prompt change.
 - Answers on messy recipes are noisy: three identical runs on 5 recipes differed in about a third of ingredient entries, and cuisines flipped on 4 of 5 recipes. The hand check has to say which answers are right (DECISIONS #26, CONCEPTS "Request dials").
 - The full run through the Batches API, which waits on a budget agreement.
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 88 tests cover the schema, prompt, validator (including extras and prep tasks), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 92 tests cover the schema, prompt, validator (including extras and prep tasks), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
