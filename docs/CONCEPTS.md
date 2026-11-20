@@ -120,7 +120,7 @@
 
 ### Structured outputs and closed vocabularies
 - **What it is:** Sending a JSON schema with the request so the API forces the model's answer to match it: right keys, right types, and only allowed values for any field marked as an enum (a fixed list). A closed vocabulary is that fixed list, such as our 18 units. The guarantee is on the shape of the answer, not on whether the values are correct.
-- **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position.
+- **Where we use it:** `build_output_schema`, `UNITS` and `CUISINES` in `pipelines/foodcom/augment.py`. `validate_result` checks the rules a schema cannot express, such as one entry per ingredient position. Version 4 added the prep-task vocabularies (`TECHNIQUES`, `CUT_SIZES`, `STATES`) and `prep_task_problems`, which checks links the schema cannot see: a task's `ingredient` must be a position that exists, a marinade needs `with`, a size only goes on a cut. A nullable enum (`cut_size`) is written as `anyOf` of the enum and `null`; the API rejected a type list with `null` inside an enum (DECISIONS #30).
 - **Why this over the alternative:** Asking for JSON in the prompt works most of the time, but across 212,846 calls some answers would be broken or use "Tbsp." instead of "tbsp", and each fix is a second paid call. The tradeoff is that the model can still be wrong inside the shape, so we still measure accuracy on a hand-checked sample.
 - **Common question:** How do you get reliable structured data out of an LLM? Constrain the output with a schema, then validate what the schema cannot check.
 
@@ -250,3 +250,9 @@
 - **Where we use it:** dbt models in `dbt/models/`, then `pipelines/foodcom/publish.py`.
 - **Why this over the alternative:** dbt is built to own and replace the tables it creates, but `public` is owned by Alembic and referenced by other tables, so it needs upserts in a transaction. The tradeoff is one more command to run after `dbt build`.
 - **Common question:** Why not let dbt write the final tables? It would reassign ids and drop tables other tables point at.
+
+### Grounded extraction (evidence pointer)
+- **What it is:** Asking the model to cite where in the source text each extracted fact comes from, not only to give the fact. A reviewer then checks one cited line instead of rereading the whole recipe, and the model has to tie each fact to real text. The pointer is evidence for review, not a guarantee and not an order.
+- **Where we use it:** `source_step` and `stated` on every prep task in `pipelines/foodcom/augment.py`. `build_user_message` numbers the steps from 1 so the model can cite them, and `prep_task_problems` rejects a step number that does not exist. The step text sits beside each task in `pipelines/foodcom/pilot/prep_tasks_v5.ipynb`.
+- **Why this over the alternative:** Extraction with no pointer gives answers that look right and are slow to check, so a hand review of 20 recipes would mean rereading every recipe in full. The pointer costs a few output tokens per task. `stated` adds a second signal: true when a step names the technique, false when it is only implied by how the step uses the ingredient, so we can measure how far to trust the implied tasks.
+- **Common question:** How do you reduce hallucination in LLM extraction? Closed vocabularies, a validator, a pointer to the source text, and a hand-reviewed sample to measure what is left.

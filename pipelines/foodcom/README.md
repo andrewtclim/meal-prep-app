@@ -5,7 +5,7 @@ Turns the raw Food.com recipes file into a clean set we can load. Three stages. 
 | Stage | Script | Status |
 |---|---|---|
 | 1. Clean and filter | `clean.py` | Done |
-| 2. Add units and cuisines with an LLM | `augment.py` | Code done (merged), 200-recipe pilot and two 20-recipe pilots run, thinking chosen; the full run waits for the budget talk |
+| 2. Add units, cuisines and prep tasks with an LLM | `augment.py` | Code done through schema version 5 (prep tasks, in review), pilots run, thinking chosen; the 5,000-recipe run for Postgres and Neo4j is next |
 | 3. Load into Postgres with dbt | `load.py` and `dbt/` | In review (PRs #20, #21, #22) |
 
 ## Stage 1: clean
@@ -49,7 +49,7 @@ Each filter applies after the one above it.
 - 21 tests cover the helpers (times, names, dedupe, filters).
 - Each run prints a report: rows in and out, missing values per column, the 10 biggest duplicate groups, and 5 sample rows.
 
-## Stage 2: add units and cuisines with an LLM
+## Stage 2: add units, cuisines and prep tasks with an LLM
 
 The dataset has no ingredient units, and its quantities line up with the ingredient list in only about 22% of recipes. So for each recipe a Claude model reads the name, steps and raw lists and returns an amount and a unit for every ingredient, plus the cuisines (DECISIONS #23, #26).
 
@@ -60,8 +60,8 @@ Without `--limit` it runs the 200-recipe pilot. Reads `data/interim/recipes_subs
 ### How a recipe is processed
 1. `build_user_message` turns the recipe row into numbered text.
 2. `build_request_params` adds the rules (`SYSTEM_PROMPT`) and the answer shape (`build_output_schema`).
-3. The model answers in that shape: `{ingredients: [{position, quantity, unit}], extra_ingredients: [{name, quantity, unit}], cuisine}`.
-4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", and for extras: at most 6, no salt or water, no repeat of a listed name).
+3. The model answers in that shape (schema version 4): `{ingredients: [{position, quantity, unit, state}], extra_ingredients: [{name, quantity, unit, state}], cuisine, prep_tasks: [{ingredient, technique, cut_size, with, make_ahead, source_step, stated}]}`.
+4. `validate_result` checks what the schema cannot (one entry per ingredient, null quantity only for "to taste", and for extras: at most 6, no salt or water, no repeat of a listed name). For prep tasks, `prep_task_problems` checks that positions exist (extras count), a marinade has `with` and nothing else does, a size only goes on a cut, `source_step` is a real step, no repeated (ingredient, technique), implied tasks use only mince, dice or chop with no size, and at most 12 tasks.
 5. On a problem, one retry names the problems. Then the result line is saved.
 
 ### The ingredient list is not complete (2026-10-29)
@@ -80,6 +80,7 @@ A 5-recipe test on the new schema ($0.0035) passed validation on the first try a
 ### The fixed lists
 - **Units (18):** g, kg, ml, l, tsp, tbsp, cup, fl_oz, oz, lb, piece, clove, slice, can, bunch, pinch, dash, to_taste. `package` was removed (its size varies by product, so "1 package" and "1 lb" of the same noodles disagreed); the prompt says to give a weight for packaged goods. The other loose units (can, bunch, pinch, dash, piece) are still under review.
 - **Cuisines (90, exactly 1 per recipe):** Food.com's own cuisine tags plus the ones it lacks (italian, french, american, british, irish, mediterranean...), grouped by region in `CUISINES`. Merged on purpose: scottish and welsh into british, szechuan and hunan into chinese, lebanese and turkish into middle_eastern. The model names one cuisine; the parent comes from a small table in code (`CUISINE_PARENT`, `cuisine_path`: cantonese gives chinese), so it costs no tokens. Umbrella labels (african, middle_eastern, scandinavian, south_american...) catch countries we did not list, and `other` is the last resort (DECISIONS #26 amendment). The earlier 20-cuisine run in the sections below used the old list.
+- **Prep techniques (12):** dice, mince, chop, slice, julienne, grate, shred, peel, trim, marinate, rub, brine. **Cut sizes (6, or null):** fine, small, medium, large, thin, thick. **State:** raw or cooked in the finished dish. Closed for the same reason as units: the graph matches tasks across recipes on exact strings (DECISIONS #30).
 - **Near-neighbour risk:** labels that cover almost the same food (british and irish, italian and mediterranean) can make the model inconsistent. This is not measured yet; the repeatability run and the hand check will show which pairs to merge.
 
 ### The cuisine baseline
@@ -127,10 +128,10 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - The model tagged `american` on 156 of 200 recipes, often as a second cuisine. This may be a filler tag and needs a look.
 
 ### Thinking vs no thinking: 20 recipes (2026-10-30)
-**Decision (2026-11-02): use thinking.** Paul picked thinking from his notebook review (no-thinking was wrong by a large amount on Salmon Basil Rolls, Lemon Cucumbers and Fava Beans), and Andrew agrees. The two files this comparison was judged on are version-2 results, kept as the evidence behind that decision: `results_thinking_v2.jsonl` and `results_nothinking.jsonl`. (Running `--compare` under a newer version appends to the file for that mode, so the thinking file was renamed first; see the version-3 run below.) Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
+**Decision (2026-11-02): use thinking.** Paul picked thinking from his notebook review (no-thinking was wrong by a large amount on Salmon Basil Rolls, Lemon Cucumbers and Fava Beans), and Andrew agrees. The two files this comparison was judged on are version-2 results, kept as the evidence behind that decision: `results_thinking_v2.jsonl` and `results_nothinking.jsonl`. (Running `--compare` under a newer version appends to the file for that mode, so the thinking file was renamed first; see the version-3 run below and the file list under the version-4 pilot.) Open `pilot/thinking_vs_no_thinking.ipynb` (any kernel, only needs pandas; makes no API calls), give a verdict per recipe, and save your `review.csv` as `review_<name>.csv`.
 
 - **Sample:** 20 recipes, stratified by how raw quantities compare with ingredient names: 7 `equal`, 10 `more`, 3 `fewer` (fixed seed 2026, chosen so none were recipes we looked at while writing the prompt). Both modes got the same 20; only the `thinking` setting differs (`effort` low in both).
-- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl` (now the version-3 run) and `results_thinking_v2.jsonl` (the v2 evidence), `results_nothinking.jsonl` (v2), plus the notebook and `review.csv`.
+- **Run it:** `python -m pipelines.foodcom.augment --compare thinking` (or `nothinking`). Files land in `pipelines/foodcom/pilot/`: `stage1_rows.json`, `results_thinking.jsonl` (now the version-4 run; the version-3 run is kept as `results_thinking_v3.jsonl`) and `results_thinking_v2.jsonl` (the v2 evidence), `results_nothinking.jsonl` (v2), plus the notebook and `review.csv`.
 
 | | Thinking | No thinking |
 |---|---|---|
@@ -145,11 +146,60 @@ The same fixed-seed sample, 200 recipes (3 already saved, 197 new):
 - One recipe (Cheesy Scalloped Corn Bake) shows a limit of both modes: the dish is about corn, corn is not in the ingredient list, and the steps say "mix all ingredients", so neither mode can recover it or know the amounts. We have not decided whether to flag such recipes as possibly incomplete.
 
 ### Version-3 run of the same 20 recipes (2026-11-05)
-After the PR #18 review changes (one cuisine, `package` removed, `schema_version` 3) we reran the same 20 recipes in thinking mode so the stage 3 loader and dbt models have version-3 data to test against: `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --compare thinking`, writing a fresh `pilot/results_thinking.jsonl` (the v2 thinking file was renamed first).
+After the PR #18 review changes (one cuisine, `package` removed, `schema_version` 3) we reran the same 20 recipes in thinking mode so the stage 3 loader and dbt models have version-3 data to test against: `uv run --env-file .env --group pipelines python -m pipelines.foodcom.augment --compare thinking`, writing a fresh `pilot/results_thinking.jsonl` (the v2 thinking file was renamed first). That file is now `results_thinking_v3.jsonl`.
 - 20 of 20 valid on the first try, no retries. Cost $0.0146 (about $0.00073 per recipe, close to version 2). Every record has `schema_version` 3 and one `cuisine` string.
 - Paul's `load.py --dry-run` (PR #20) reads all 20 records and builds 20 rows.
 - Both runs are thinking mode (same model, same 20 recipes); only the rules changed between them. 34 of 170 ingredient entries differ in unit or quantity (20%). Two identical thinking runs differed on about a third of entries in an earlier 5-recipe test, so 20% is within run-to-run noise and shows no clear shift from the new rules.
 - The first cuisine changed on 4 of 20 recipes and the new answers are reasonable, not blocking. Two are worth a mention: Cherokee Casserole (keyword `Native American`) became `american` although `native_american` is available and more specific, and Lemon Cucumbers (no cuisine signal) became `american` although the prompt says not to default to it. It is 20 recipes, one run each, so it may be noise. A prompt change would mean a new `SCHEMA_VERSION`, so it is only noted for the team meeting.
+
+### Prep tasks (schema version 4, 2026-11-15)
+Each recipe's answer now lists the prep the steps need, so the app can prep a shared ingredient once for several recipes (DECISIONS #6, #30). A toy recipe, Soy-Ginger Chicken Bowls (8 ingredients and 1 extra, sesame oil, at position 8):
+
+| ingredient | technique | cut_size | with | make_ahead | source_step | stated |
+|---|---|---|---|---|---|---|
+| yellow onion | dice | small ("finely") | none | true | 1 | true |
+| garlic | mince | null | none | true | 2 | true |
+| chicken thighs | marinate | null | ginger, garlic, sesame oil, soy sauce | true | 2 | true |
+| roma tomatoes | dice | null | none | false | 4 | true |
+
+- **Not tasks:** searing (cooking), slicing the cooked chicken, and scallions that no step cuts.
+- **`ingredient` and `with` are positions.** Listed ingredients are 0..n-1 and extras are numbered after them, so a marinade can use an extra.
+- **`stated`:** true when a step names the technique, false when a step only uses the ingredient in a way that needs it cut ("saute onion and garlic"). Implied tasks use a default (garlic mince, onion and firm vegetables dice, herbs chop), never carry a size, and are never given to meat, fish, eggs, dairy, canned food, pasta, rice or liquids.
+- **`source_step`** is the step that states the task, evidence for review and not a prep order. `make_ahead` is the model's judgment.
+- **Later (not built):** dbt builds the Neo4j `form` as the `cut_size`, or the sorted input names joined with ` + `, or an empty string. `load.py` accepts only version 3, so it skips version-4 records until a follow-up.
+
+**Pilot (the same 20 recipes, thinking mode):**
+
+| | v3 | v4 strict (stated only) | v4 (stated + implied) |
+|---|---|---|---|
+| Valid on first try / retries | 20 / 0 | 20 / 0 | 20 / 0 |
+| Tokens in / out per recipe | 2,810 / 894 | 4,078 / 1,183 | 4,460 / 1,506 |
+| Cost for the 20 | $0.0146 | $0.0200 | $0.0240 |
+| Full run, direct / Batches | ~$155 / ~$77 | ~$213 / ~$106 | ~$255 / ~$128 |
+| Recipes with a task / tasks | n/a | 4 / 5 | 18 / 50 (9 stated, 41 implied) |
+
+- **Why two runs:** with stated tasks only, 16 of 20 recipes came back empty. Food.com steps are terse and rarely say to chop an onion. Mostly that is the data, but not all of it: the model skipped "sprinkle grated cheese" in Better Tater Tot Casserole even though that is a stated task. Allowing implied tasks gave 7 groups shared by 2 or more recipes (onion dice in 8 of 20), but 82% of tasks are judgments, so the hand review decides how far to trust them.
+- **`garlic` and `garlic cloves` do not match** (4 and 3 recipes), because ingredient names are not normalized yet.
+- **Paul's review of this run** (`pilot/review_prep_paul.csv`): of the 50 tasks, 45 real, 4 wrong, 1 invented; and 12 prep tasks the rules would want that the model left out. It was made in the version-4 notebook, which version 5 replaced (see below).
+- **Files:** `results_thinking_v4_implied.jsonl` (this run, version 4), `results_thinking_v4_strict.jsonl` (the stated-only run), `results_thinking_v3.jsonl` (version 3), `results_thinking_v2.jsonl` and `results_nothinking.jsonl` (the version-2 comparison). `results_thinking.jsonl` is the version-5 run below.
+- **Open:** pure mixing steps ("mix into pico") are left out, and `cut` is not a technique (DECISIONS #30).
+
+### Version 5: any cut, recipe-name cue, implied marinade (2026-11-19)
+Reading the version-4 run, cabbage in a coleslaw came back as `dice` because the prompt gave one fixed default per ingredient and the validator allowed only mince, dice and chop for implied tasks. Version 5 changes:
+
+| Change | Before | Now |
+|---|---|---|
+| Implied techniques | mince, dice, chop | any cut: mince, dice, chop, slice, shred, grate, julienne |
+| How the model picks | one default per ingredient | the ingredient **and the recipe name** ("coleslaw: shred the cabbage", "stir fry: slice"), with the old default as the fallback |
+| Implied marinade | never | allowed when a step coats an ingredient in a named mixture **and** lets it stand (needs `with`); rub, brine, peel, trim stay stated-only |
+| Optional ingredients ("if desired") | could get a task | no task |
+| Cut on a liquid or fat (oil, sauce, juice...) | accepted | rejected by the validator, so the retry fixes it |
+
+The last row came from the pilot: in Stir Fry Vegan Ramen the model wrote the number of the sesame oil (an extra) when it meant the onion, so the oil was "diced". The schema cannot see names, so `prep_task_problems` checks the head noun of the ingredient name (`is_liquid`) and the retry names the mistake. A recipe name never creates a task, it only picks the technique for an ingredient a step already uses.
+
+**Pilot (the same 20 recipes):** 20 of 20 valid on the first try, no retries, $0.0246 (4,710 in and 1,521 out per recipe; full run about $262 direct or $131 on Batches). 55 tasks in 19 recipes, and 14 of 20 recipes differ from the version-4 run, partly run-to-run noise. Cabbage in the coleslaw became `shred`, carrot coins `slice`, and the grated and shredded cheese in two recipes became stated tasks. Andrew and Paul read it together and judged it good enough. The implied-marinade rule and the liquid check came after this pilot, so the saved pilot (`results_thinking.jsonl`) predates them. Compare it with the earlier runs in `pilot/prep_tasks_v5.ipynb` (any kernel with pandas, no API calls).
+
+**We stopped tuning here.** We considered an automated loop (an LLM judge plus an editor that rewrites the prompt against a held-out recipe set) and dropped it for the MVP: the judge would first need calibrating against human labels, and the prompt is already good enough. Reopen it if the review of the full run finds systematic errors.
 
 ### Not done yet
 - The 30-recipe review file for a hand check of accuracy.
@@ -159,4 +209,4 @@ After the PR #18 review changes (one cuisine, `package` removed, `schema_version
 - Backing up `augment_results.jsonl` somewhere other than the laptop.
 
 ### Checks
-- 62 tests cover the schema, prompt, validator (including extras), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
+- 92 tests cover the schema, prompt, validator (including extras and prep tasks), cuisine baseline, retry and resume. They use a fake client, so no test calls the API.
