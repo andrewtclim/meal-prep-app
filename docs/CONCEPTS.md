@@ -221,6 +221,36 @@
 - **Why this over the alternative:** Hardcoding the pairs in SQL hides them inside a model, and having the LLM return the parent costs tokens and can disagree with the table. A seed keeps the data visible and testable. The tradeoff is two copies of the map to keep in step, which is why the drift test exists.
 - **Common question:** Why is this a dbt seed when the units and cuisines lookups are Alembic seeds? Those tables belong to Alembic and the app; this mapping is only read by dbt.
 
+### Unpacking a jsonb list into rows (lateral join, ordinality)
+- **What it is:** `jsonb_array_elements_text(list)` returns one row per item in a jsonb list. `cross join lateral` lets it read the list from the current row of the table to its left. `with ordinality` adds a counter that starts at 1, so it needs `- 1` to match a 0-based position.
+- **Where we use it:** `dbt/models/intermediate/int_recipe_ingredients.sql` (names, extras). Cuisines are no longer a list: `int_recipe_cuisines.sql` reads the single `cuisine` and adds its parent from the seed.
+- **Why this over the alternative:** Doing the unpacking in Python would mean running a script outside the database and losing dbt's ordering and tests. The tradeoff is Postgres-specific syntax that is harder to read than a loop.
+- **Common question:** How do you turn a list inside a column into rows? Explode it with a lateral join; the counter keeps the order.
+
+### Singular test (dbt)
+- **What it is:** A SQL file in `dbt/tests/` that returns the rows that break a rule. Zero rows means the test passes. Built-in tests (`unique`, `not_null`) cover one column; a singular test covers a rule across tables or counts.
+- **Where we use it:** `dbt/tests/recipe_cuisine_count.sql` (each recipe has 1 cuisine, or 2 when that cuisine has a parent, and no duplicates). It starts from `stg_recipes` with a left join so recipes with no rows still show up; `not_null` cannot see rows that do not exist.
+- **Why this over the alternative:** A package like `dbt_utils` has ready-made tests but is a new dependency. A short SQL file needs nothing new. The tradeoff is that the 1-or-2 rule has to stay in step with the cuisine-parent seed by hand.
+- **Common question:** What does a missing row look like to a test? Nothing, which is why you start from the table that has every row.
+
+### dbt schema naming macro
+- **What it is:** dbt calls the macro `generate_schema_name` to pick each model's schema. By default it joins the target schema and the custom name (`staging_intermediate`). Our override in `dbt/macros/generate_schema_name.sql` uses the custom name as written.
+- **Where we use it:** `+schema: intermediate` in `dbt/dbt_project.yml`.
+- **Why this over the alternative:** The default keeps developers from overwriting each other in a shared database. We have one dev database, so plain names are clearer. If that changes, we need a per-person target schema.
+- **Common question:** Why did dbt create `staging_intermediate`? Its default prefixes the target schema.
+
+### Transaction and rollback (dry run)
+- **What it is:** A transaction groups statements so they succeed or fail as one: nothing is visible to others until `COMMIT`, and an error means `ROLLBACK` undoes all of it. In psycopg, `with conn.transaction():` commits when the block ends and rolls back if an exception leaves it. Raising `psycopg.Rollback()` inside the block rolls back on purpose and leaves quietly, which gives a dry run: do every step, read the counts, change nothing.
+- **Where we use it:** `publish` in `pipelines/foodcom/publish.py`, and `replace_table` in `pipelines/foodcom/load.py`.
+- **Why this over the alternative:** Without a transaction, a failure halfway leaves `public` half-updated, which we saw when testing a dbt macro that did not start with `begin`. The tradeoff is that a long transaction holds locks and cannot undo anything after it commits (identity counters also do not go back).
+- **Common question:** What happens if the fourth statement fails? The first three are undone, because none was committed.
+
+### Transform vs publish
+- **What it is:** Splitting the pipeline into a step that builds and tests data in scratch schemas (dbt: `staging`, `intermediate`) and a separate, careful step that writes it into the live tables (`publish.py` into `public`). A check sits between them (dbt tests, then the missing-name checks). Close cousin of write-audit-publish.
+- **Where we use it:** dbt models in `dbt/models/`, then `pipelines/foodcom/publish.py`.
+- **Why this over the alternative:** dbt is built to own and replace the tables it creates, but `public` is owned by Alembic and referenced by other tables, so it needs upserts in a transaction. The tradeoff is one more command to run after `dbt build`.
+- **Common question:** Why not let dbt write the final tables? It would reassign ids and drop tables other tables point at.
+
 ### Grounded extraction (evidence pointer)
 - **What it is:** Asking the model to cite where in the source text each extracted fact comes from, not only to give the fact. A reviewer then checks one cited line instead of rereading the whole recipe, and the model has to tie each fact to real text. The pointer is evidence for review, not a guarantee and not an order.
 - **Where we use it:** `source_step` and `stated` on every prep task in `pipelines/foodcom/augment.py`. `build_user_message` numbers the steps from 1 so the model can cite them, and `prep_task_problems` rejects a step number that does not exist. The step text sits beside each task in `pipelines/foodcom/pilot/prep_tasks_v5.ipynb`.
